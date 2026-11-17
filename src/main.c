@@ -507,6 +507,7 @@ static __attribute__((unused)) int decode_jpeg_rgb565(const uint8_t *jpg, size_t
 /* ---------------- RTSP (libavformat) ---------------- */ /* tweak */
 
 static AVFormatContext *g_fmt;
+static int rtsp_backoff_ms = 1000;   /* grows while the module stays unreachable */
 static AVCodecContext *g_dec;
 static struct SwsContext *g_sws;
 static int g_vidx = -1;
@@ -533,9 +534,9 @@ static int rtsp_open_stream(void)
         av_strerror(rc, err, sizeof(err));
         static time_t last_log;
         time_t now = time(NULL);
-        if (now - last_log >= 5) {
+        if (now - last_log >= 10) {
             last_log = now;
-            printf("rtsp: open failed: %s\n", err);
+            printf("rtsp: open failed: %s (retry in %d ms)\n", err, rtsp_backoff_ms);
             fflush(stdout);
         }
         av_dict_free(&opts);
@@ -563,6 +564,7 @@ static int rtsp_open_stream(void)
                            SWS_FAST_BILINEAR, NULL, NULL, NULL);
     if (!g_sws) return -1;
 
+    rtsp_backoff_ms = 1000;
     printf("rtsp: %s %dx%d codec=%s\n", g_fmt->iformat->name,
            g_dec->width, g_dec->height, codec->name);
     fflush(stdout);
@@ -624,13 +626,22 @@ static void *video_thread(void *arg)
 
     while (running) {
         if (!g_fmt && rtsp_open_stream() != 0) {
-            usleep(1000 * 1000);
+            /* Back off while the module is unreachable. Hammering it once per
+             * second keeps a wedged module busy and floods the log. */
+            usleep((useconds_t)rtsp_backoff_ms * 1000);
+            rtsp_backoff_ms *= 2;
+            if (rtsp_backoff_ms > 15000) rtsp_backoff_ms = 15000;
             continue;
         }
 
         if (av_read_frame(g_fmt, pkt) < 0) {
-            printf("rtsp: read failed, reconnecting\n");
-            fflush(stdout);
+            static time_t last_read_log;
+            time_t now = time(NULL);
+            if (now - last_read_log >= 10) {
+                last_read_log = now;
+                printf("rtsp: read failed, reconnecting\n");
+                fflush(stdout);
+            }
             rtsp_close_stream();
             usleep(500 * 1000);
             continue;
