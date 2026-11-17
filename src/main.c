@@ -2241,6 +2241,8 @@ static lv_obj_t *wifi_modal_title;
 static char g_ssid_sel[64];
 static char g_ip[64] = "";
 static volatile int wifi_dirty = 0;
+static volatile int wifi_scanning = 0;
+static time_t wifi_poll_ts;
 static volatile int wifi_connecting = 0;
 
 static void shell_exec(const char *cmd, char *out, size_t out_n)
@@ -2399,13 +2401,20 @@ static void *wifi_scan_thread(void *arg)
     wifi_scan();
     wifi_collect();
     wifi_dirty = 2;
+    wifi_scanning = 0;
     return NULL;
 }
 
 static void wifi_scan_async(void)
 {
+    if (wifi_scanning) return;
+    wifi_scanning = 1;
     pthread_t th;
-    if (pthread_create(&th, NULL, wifi_scan_thread, NULL) == 0) pthread_detach(th);
+    if (pthread_create(&th, NULL, wifi_scan_thread, NULL) == 0) {
+        pthread_detach(th);
+    } else {
+        wifi_scanning = 0;
+    }
 }
 
 static void on_wifi_refresh_click(lv_event_t *e)
@@ -3465,6 +3474,26 @@ static void update_ui(void)
         preview_req = NULL;
         preview_open(name);
         free(name);
+    }
+
+    /* The UI comes up before the radio is ready, so the one-shot status read at
+     * startup shows "WiFi: --". Keep polling while the page is open, and retry
+     * the scan if the list came back empty because the adapter was still down. */
+    if (cur_page == 2) {
+        time_t nowt = time(NULL);
+        if (nowt - wifi_poll_ts >= 3) {
+            wifi_poll_ts = nowt;
+            wifi_collect();
+            wifi_status_refresh();
+            /* the URL labels on the other pages are filled once at boot too */
+            if (url_lbl || url_lbl2) {
+                char u[96];
+                snprintf(u, sizeof(u), "http://%s:8080", g_ip[0] ? g_ip : "--");
+                if (url_lbl) lv_label_set_text(url_lbl, u);
+                if (url_lbl2) lv_label_set_text(url_lbl2, u);
+            }
+            if (g_ap_count == 0 && !wifi_scanning && !wifi_connecting) wifi_scan_async();
+        }
     }
 
     /* wifi events */
