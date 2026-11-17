@@ -85,6 +85,9 @@ ISAPI 实测记录见 [docs/4117_isapi_verified.md](docs/4117_isapi_verified.md)
 
 ## 编译
 
+> 3.1" 屏只有触摸没有键盘，**别在屏上敲命令**。用串口或 SSH 登录，
+> 或者在 PC 上跑 `scripts/bootstrap.ps1`（见下文「部署」）。
+
 ```bash
 git clone https://github.com/ymyjwbckadnhz/tb4117-ncm-linux.git ~/linux-app
 cd ~/linux-app
@@ -131,11 +134,38 @@ bash scripts/build.sh --no-restart # 只编译
 
 ## 运行与部署
 
-**一条命令完成部署**（装依赖 + 拉 LVGL + 编译 + 配网卡 + 装服务 + 关 lightdm）：
+### 在电脑上一条命令完成部署（推荐）
+
+板子联网、SSH 通之后，在**电脑**上执行——全程不用在 3.1" 屏上输入任何东西：
+
+```powershell
+.\scripts\bootstrap.ps1 -Board linaro@192.168.1.50
+```
+
+```bash
+BOARD=linaro@192.168.1.50 bash scripts/bootstrap.sh
+```
+
+它会：上传源码 → 在板子上跑 `setup_device.sh`（装依赖 + 拉 LVGL + 编译 +
+配 `usb0` + 装 systemd 服务 + 关 lightdm）。
+
+### 在板子上直接跑
+
+已经通过串口或 SSH 登录时：
 
 ```bash
 bash scripts/setup_device.sh
 ```
+
+### 首次开机怎么进板子
+
+| 方式 | 说明 |
+|---|---|
+| **串口** | USB-TTL，**1 500 000** 波特率，`linaro`/`linaro`。首次开机没网时唯一入口 |
+| **SSH** | `ssh linaro@<板子IP>`（密码 `linaro`）。官方镜像首次开机 sshd 缺 host key，需先用串口执行 `ssh-keygen -A && systemctl restart ssh` |
+| **HDMI + 键鼠** | 官方镜像带桌面，接着用也行 |
+
+详见 [docs/flash_image.md](docs/flash_image.md)。
 
 手动方式：
 

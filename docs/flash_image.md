@@ -67,7 +67,85 @@ nmcli con up 4117
 
 ---
 
-## 4. 部署本项目
+## 4. 怎么在板子上执行命令（重要）
+
+3.1" 屏只有触摸、没有键盘，**不要试图在屏上敲 `git clone`**。三种方式，任选：
+
+### 方式 A：串口（最稳，首次开机就能用）
+
+需要 USB-TTL 模块（CH340/CP2102 都行），接板子的调试串口：
+
+| 参数 | 值 |
+|---|---|
+| 波特率 | **1 500 000** |
+| 数据位/停止位/校验 | 8 / 1 / 无 |
+| 登录 | `linaro` / `linaro`（或 `root` / `linaro`） |
+
+Windows 用 PuTTY / MobaXterm 选对应 COM 口即可。首次开机、还没联网时，
+这是唯一能进去的通道。
+
+### 方式 B：SSH（推荐日常使用）
+
+前提是板子已经联网（WiFi 或网线）。查 IP 的办法：
+
+- 串口里执行 `hostname -I`；
+- 或者登录路由器后台看 DHCP 列表。
+
+**官方镜像有一个坑**：第一次开机 sshd 会起不来（没有 host key）：
+
+```
+sshd: no hostkeys available -- exiting
+```
+
+先用串口修一次：
+
+```bash
+ssh-keygen -A && systemctl restart ssh
+```
+
+然后电脑上：
+
+```bash
+ssh linaro@<板子IP>          # 密码 linaro
+```
+
+### 方式 C：HDMI + USB 键鼠
+
+官方镜像是带桌面的，接 HDMI 显示器 + USB 键盘鼠标也能操作（setup 跑完会关掉桌面）。
+
+---
+
+## 5. 部署本项目（两种方式）
+
+### 5.1 电脑上一条命令（推荐，完全不用在板子上敲）
+
+板子联网、SSH 能通之后，在**电脑**上执行：
+
+```powershell
+# Windows
+cd linux-app
+.\scripts\bootstrap.ps1 -Board linaro@192.168.1.50
+```
+
+```bash
+# Linux / macOS
+cd linux-app
+BOARD=linaro@192.168.1.50 bash scripts/bootstrap.sh
+```
+
+脚本会把源码传到板子并远程执行 `setup_device.sh`，全程不需要在 3.1" 屏上输入任何东西。
+
+### 5.2 在板子上直接跑
+
+如果已经通过串口或 SSH 登录：
+
+```bash
+git clone https://github.com/ymyjwbckadnhz/tb4117-ncm-linux.git ~/linux-app
+cd ~/linux-app
+bash scripts/setup_device.sh
+```
+
+
 
 ```bash
 git clone https://github.com/ymyjwbckadnhz/tb4117-ncm-linux.git ~/linux-app
@@ -96,14 +174,14 @@ rtsp: rtsp 320x240 codec=mjpeg
 
 ---
 
-## 5. 机芯设置
+## 6. 机芯设置
 
 机芯需要先切到 **NCM 模式**，IP 改为 `192.168.64.64`（出厂多为 UVC 模式或 `10.0.0.x`）。
 改法见 [ncm_switch.md](ncm_switch.md)，接口清单见 [4117_isapi_verified.md](4117_isapi_verified.md)。
 
 ---
 
-## 6. 屏幕不亮时
+## 7. 屏幕不亮时
 
 ```bash
 systemctl get-default          # 应为 multi-user.target
