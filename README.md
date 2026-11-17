@@ -144,6 +144,19 @@ bash scripts/build.sh --no-restart # 只编译
 
 ## 运行与部署
 
+### 免编译安装（Releases 里的运行包）
+
+不想装编译环境的话，直接下运行包（436 KB）：
+
+```bash
+tar xzf tb4117-ncm-linux-v1.0.0-aarch64.tar.gz
+cd tb4117-ncm-linux-v1.0.0-aarch64
+bash install.sh
+```
+
+包里是已链接 LVGL 的 `tb4117_verify` + `install.sh`（装运行库、拷程序、配 usb0、
+装 systemd 服务）。自己打包：`VER=v1.0.0 bash scripts/package.sh`。
+
 ### 在电脑上一条命令完成部署（推荐）
 
 板子联网、SSH 通之后，在**电脑**上执行——全程不用在 3.1" 屏上输入任何东西：
