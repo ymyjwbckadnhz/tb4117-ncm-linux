@@ -3,10 +3,11 @@
 泰山派（RK3566）上的原生热成像仪，**LVGL 9 + DRM** 直出 480×800 MIPI 屏，
 通过 USB-NCM 走 ISAPI 读取海康 **TB-4117-3/S** 机芯，能拿到**逐像素温度矩阵**。
 
+<!-- 图片走 jsDelivr 绝对地址，GitHub 和 Gitee 两边都能显示 -->
 <p>
-<img src="docs/images/thermal.png" width="240">
-<img src="docs/images/settings.png" width="240">
-<img src="docs/images/files.png" width="240">
+<img src="https://cdn.jsdelivr.net/gh/ymyjwbckadnhz/tb4117-ncm-linux@master/docs/images/thermal.png" width="240">
+<img src="https://cdn.jsdelivr.net/gh/ymyjwbckadnhz/tb4117-ncm-linux@master/docs/images/settings.png" width="240">
+<img src="https://cdn.jsdelivr.net/gh/ymyjwbckadnhz/tb4117-ncm-linux@master/docs/images/files.png" width="240">
 </p>
 
 ---
