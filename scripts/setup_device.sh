@@ -113,6 +113,22 @@ else
     echo "警告：usb0 没有拿到 192.168.64.32，请确认机芯已切到 NCM 并上电"
 fi
 
+# ---------------------------------------------------------------- boot time
+# The stock image ships /etc/network/interfaces.d/network-priority with
+#   auto eth0 / auto wlan0 / auto ec20
+# None of those exist on this board (the camera link is usb0, managed by
+# NetworkManager) so every boot runs ifupdown's DHCP and waits for timeouts,
+# which is a big part of the slow cold boot. Keep a copy OUTSIDE interfaces.d -
+# a ".orig" file in that directory is still sourced by "source !/etc/network/interfaces.d/*"!
+say "关掉 ifupdown 里不存在接口的自动启动"
+VENDOR=/etc/network/interfaces.d/network-priority
+if [ -f "$VENDOR" ] && grep -q '^auto ' "$VENDOR"; then
+    sudo cp "$VENDOR" /root/network-priority.orig
+    sudo sed -i 's/^auto eth0/#auto eth0/; s/^auto wlan0/#auto wlan0/; s/^auto ec20/#auto ec20/' "$VENDOR"
+    echo "已停用 eth0/wlan0/ec20 的 auto（备份 /root/network-priority.orig）"
+else
+    echo "无需修改"
+fi
 # ---------------------------------------------------------------- credentials
 say "机芯凭据"
 CONF="$ROOT/device.conf"

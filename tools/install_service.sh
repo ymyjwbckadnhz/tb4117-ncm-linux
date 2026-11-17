@@ -5,7 +5,10 @@ set -e
 sudo -n tee /etc/systemd/system/tb4117.gui.service >/dev/null <<'UNIT'
 [Unit]
 Description=TB-4117 thermal camera UI (LVGL)
-After=multi-user.target network.target
+# Do NOT wait for multi-user.target: that pulls in networking.service, which can
+# sit in a DHCP timeout for tens of seconds when the camera link is not up yet.
+# The UI only needs local DRM + input, so start as early as possible.
+After=network.target
 Wants=network.target
 
 [Service]
