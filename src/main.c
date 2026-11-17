@@ -3479,20 +3479,29 @@ static void update_ui(void)
     /* The UI comes up before the radio is ready, so the one-shot status read at
      * startup shows "WiFi: --". Keep polling while the page is open, and retry
      * the scan if the list came back empty because the adapter was still down. */
-    if (cur_page == 2) {
+    {
         time_t nowt = time(NULL);
-        if (nowt - wifi_poll_ts >= 3) {
+        if (nowt - wifi_poll_ts >= 5) {
             wifi_poll_ts = nowt;
+
+            char prev[128];
+            snprintf(prev, sizeof(prev), "%s", g_status_text);
             wifi_collect();
-            wifi_status_refresh();
-            /* the URL labels on the other pages are filled once at boot too */
-            if (url_lbl || url_lbl2) {
+
+            /* only touch LVGL when something actually changed */
+            if (strcmp(prev, g_status_text) != 0) {
+                wifi_status_refresh();
                 char u[96];
                 snprintf(u, sizeof(u), "http://%s:8080", g_ip[0] ? g_ip : "--");
                 if (url_lbl) lv_label_set_text(url_lbl, u);
                 if (url_lbl2) lv_label_set_text(url_lbl2, u);
+                printf("wifi: %s\n", g_status_text);
+                fflush(stdout);
             }
-            if (g_ap_count == 0 && !wifi_scanning && !wifi_connecting) wifi_scan_async();
+
+            /* a scan is only worth it while the network page is on screen */
+            if (cur_page == 2 && g_ap_count == 0 && !wifi_scanning && !wifi_connecting)
+                wifi_scan_async();
         }
     }
 
