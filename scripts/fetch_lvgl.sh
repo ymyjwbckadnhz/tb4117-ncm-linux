@@ -10,11 +10,32 @@ if [ -d third_party/lvgl/src ]; then
 fi
 
 mkdir -p third_party
-echo "downloading LVGL ${VER} ..."
-curl -fL -o /tmp/lvgl.tar.gz \
-    "https://github.com/lvgl/lvgl/archive/refs/tags/v${VER}.tar.gz"
-tar -xzf /tmp/lvgl.tar.gz -C /tmp
-rm -rf third_party/lvgl
-mv "/tmp/lvgl-${VER}" third_party/lvgl
-rm -f /tmp/lvgl.tar.gz
+
+# GitHub first, Gitee mirror as a fallback for networks that cannot reach GitHub
+URLS="
+https://github.com/lvgl/lvgl/archive/refs/tags/v${VER}.tar.gz
+https://gitee.com/mirrors/lvgl/repository/archive/v${VER}.tar.gz
+"
+
+ok=0
+for u in $URLS; do
+    echo "trying $u"
+    if curl -fL --connect-timeout 15 -o /tmp/lvgl.tar.gz "$u"; then
+        ok=1
+        break
+    fi
+done
+
+if [ "$ok" != 1 ]; then
+    echo "download failed; put the LVGL ${VER} source tree at third_party/lvgl manually" >&2
+    exit 1
+fi
+
+rm -rf /tmp/lvgl-src third_party/lvgl
+mkdir -p /tmp/lvgl-src
+tar -xzf /tmp/lvgl.tar.gz -C /tmp/lvgl-src
+# the archive contains exactly one top-level directory
+mv /tmp/lvgl-src/* third_party/lvgl
+rm -rf /tmp/lvgl-src /tmp/lvgl.tar.gz
+
 echo "LVGL ${VER} -> third_party/lvgl"
