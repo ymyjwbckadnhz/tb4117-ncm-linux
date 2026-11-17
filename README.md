@@ -67,15 +67,19 @@ ISAPI 实测记录见 [docs/4117_isapi_verified.md](docs/4117_isapi_verified.md)
 
 ## 系统镜像
 
-官方 Debian 镜像不带 3.1" MIPI 屏支持，需要替换 **boot 分区**：
+**用官方镜像就行，不需要自建或分发任何镜像。** 立创的
+`tspi-1m-kernel6.1-debian-3.1inch-mipi-20260331.img`（4.46 GB）自带 3.1" MIPI 面板支持，
+本项目就在这套镜像上实测通过。
 
-| 路径 | 下载 | 说明 |
-|---|---|---|
-| **只换 boot**（推荐） | `6.1boot.img`（40 MB） | 先刷官方 Debian 6.1 镜像，再用 RKDevTool 只写 boot 分区 |
-| 整机镜像 | `6.1update.img`（4.46 GB） | 开箱即用，需要网盘 / 分卷 |
+```
+资料下载中心  https://wiki.lckfb.com/zh-hans/tspi-rk3566/download-center.html
+百度网盘      https://pan.baidu.com/s/5m1jN3xFWAu_8qbUbidNeMw
+路径          第06章.【立创·泰山派】系统镜像 / kernel6.1 / 【镜像】Debian12 /
+```
 
-两条路径最后都跑一次 `bash scripts/setup_device.sh` 完成部署。
-烧录步骤、SHA256、Loader 模式进入方法见 **[docs/flash_image.md](docs/flash_image.md)**。
+刷完跑 `bash scripts/setup_device.sh` 即可。烧录步骤，以及官方镜像自身的两个坑
+（sshd 缺 host key、usb0 未被 NetworkManager 接管）见
+**[docs/flash_image.md](docs/flash_image.md)**。
 
 ---
 
