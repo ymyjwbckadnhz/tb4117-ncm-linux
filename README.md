@@ -65,6 +65,20 @@ ISAPI 实测记录见 [docs/4117_isapi_verified.md](docs/4117_isapi_verified.md)
 
 ---
 
+## 系统镜像
+
+官方 Debian 镜像不带 3.1" MIPI 屏支持，需要替换 **boot 分区**：
+
+| 路径 | 下载 | 说明 |
+|---|---|---|
+| **只换 boot**（推荐） | `6.1boot.img`（40 MB） | 先刷官方 Debian 6.1 镜像，再用 RKDevTool 只写 boot 分区 |
+| 整机镜像 | `6.1update.img`（4.46 GB） | 开箱即用，需要网盘 / 分卷 |
+
+两条路径最后都跑一次 `bash scripts/setup_device.sh` 完成部署。
+烧录步骤、SHA256、Loader 模式进入方法见 **[docs/flash_image.md](docs/flash_image.md)**。
+
+---
+
 ## 编译
 
 依赖：
@@ -107,6 +121,14 @@ bash scripts/build.sh --no-restart # 只编译
 ---
 
 ## 运行与部署
+
+**一条命令完成部署**（装依赖 + 拉 LVGL + 编译 + 配网卡 + 装服务 + 关 lightdm）：
+
+```bash
+bash scripts/setup_device.sh
+```
+
+手动方式：
 
 ```bash
 sudo ./build/tb4117_verify          # 手动跑
