@@ -275,6 +275,40 @@ nmcli、拍照、录像等阻塞操作都在工作线程里，不阻塞界面。
 
 ---
 
+## 启动时间
+
+断电冷启动（串口实测，从 DDR 训练算起）：
+
+| 阶段 | 本段 | 累计 |
+|---|---|---|
+| 上电 / DDR 训练 | 0.44 s | 0.44 s |
+| U-Boot | **4.22 s** | 4.65 s |
+| 内核 → systemd | 2.40 s | 7.06 s |
+| systemd → 应用起来 | 4.59 s | **11.64 s** |
+| 机芯网卡就绪（画面接上） | 4.79 s | 16.43 s |
+
+复位重启更快：内核 4.1 s 后就出画面，因为机芯没断电、网卡早就在了。
+
+### 官方镜像自带的坑
+
+`/etc/network/interfaces.d/network-priority` 里 auto 了 `eth0` / `wlan0` / `ec20`，
+这三个在这块板子上都不存在（真正用的是 `usb0` + `wlan1`），于是每次开机
+`ifupdown` 都要跑一遍 DHCP 等超时，`networking.service` 最后以失败告终，
+能把 multi-user.target 拖到几分钟。`setup_device.sh` 会把这三行 `auto` 注释掉。
+
+> 备份文件**不要**放在 `/etc/network/interfaces.d/` 里：那个目录是
+> `source /etc/network/interfaces.d/*` 全量加载的，`.orig` 也会被读进去。
+
+另外 systemd 单元不能写 `After=multi-user.target`——界面只要 DRM + 输入设备，
+等整个 multi-user 就等于把这堆网络超时全等一遍。
+
+### 还能再快吗
+
+U-Boot 占 4.2 s，主要是 DDR 从 324 MHz 升到 1056 MHz 的训练。想压只能改 U-Boot 的
+DDR 参数/去掉无用外设探测，收益有限，没动。
+
+---
+
 ## 若干实现细节（踩过的坑）
 
 ### 温度矩阵
