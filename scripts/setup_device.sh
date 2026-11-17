@@ -21,6 +21,13 @@ ARCH=$(uname -m)
 echo "架构 $ARCH  内核 $(uname -r)"
 echo "用户 $BOARD_USER  目录 $ROOT"
 
+# ---------------------------------------------------------------- ssh
+if [ -x /usr/sbin/sshd ] && [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
+    say "生成 SSH host key（官方镜像首次启动缺这个，sshd 会起不来）"
+    sudo ssh-keygen -A
+    sudo systemctl restart ssh || true
+fi
+
 # ---------------------------------------------------------------- deps
 say "安装依赖（需要联网）"
 sudo apt-get update -qq
@@ -29,9 +36,22 @@ PKGS="build-essential cmake pkg-config libfreetype-dev \
       libavformat-dev libavcodec-dev libavutil-dev libswscale-dev \
       i2c-tools network-manager fonts-wqy-zenhei"
 
-# the stock image ships a held libdrm2; retry allowing held packages to change
-sudo apt-get install -y --no-install-recommends $PKGS \
-    || sudo apt-get install -y --allow-change-held-packages --no-install-recommends $PKGS
+# --no-upgrade: never touch packages that are already installed. The stock image
+# pins libdrm and ships a patched network-manager; upgrading either can drop the
+# WiFi link mid-deploy.
+install_pkgs() {
+    sudo apt-get install -y --no-upgrade --no-install-recommends $PKGS && return 0
+    echo "常规安装失败，解除 libdrm 的 hold 再试 ..."
+    sudo apt-mark unhold libdrm2 libdrm-dev 2>/dev/null || true
+    sudo apt-get install -y --no-upgrade --no-install-recommends $PKGS && return 0
+    echo "仍失败，允许改动 held 包 ..."
+    sudo apt-get install -y --no-upgrade --allow-change-held-packages --no-install-recommends $PKGS
+}
+
+if ! install_pkgs; then
+    echo "依赖安装失败：请手动执行 sudo apt-get install $PKGS" >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------- LVGL
 say "准备 LVGL"
@@ -52,6 +72,18 @@ if ! nmcli -t -f NAME connection show | grep -qx 4117; then
     sudo nmcli con add type ethernet ifname usb0 con-name 4117 \
         ipv4.method manual ipv4.addresses 192.168.64.32/24 \
         ipv4.never-default yes ipv6.method disabled || true
+fi
+
+# the stock image leaves usb0 unmanaged/unavailable until it is told otherwise
+sudo nmcli device set usb0 managed yes 2>/dev/null || true
+sudo nmcli con mod 4117 connection.autoconnect yes 2>/dev/null || true
+sudo nmcli con up 4117 2>/dev/null || true
+
+sleep 2
+if ip -4 addr show usb0 2>/dev/null | grep -q 192.168.64.32; then
+    echo "机芯链路就绪：$(ip -4 -o addr show usb0 | awk '{print $4}')"
+else
+    echo "警告：usb0 没有拿到 192.168.64.32，请确认机芯已切到 NCM 并上电"
 fi
 
 # ---------------------------------------------------------------- service

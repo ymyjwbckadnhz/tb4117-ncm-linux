@@ -1,109 +1,124 @@
 # 系统镜像与烧录
 
-官方 Debian 镜像不带 3.1" MIPI 屏支持（面板设备树缺失，屏幕点不亮），
-所以本项目需要一个**自编译的 boot 分区**。有两种部署路径：
+> **结论：用官方镜像就行，不需要自建镜像，也不需要分享镜像。**
 
-| 路径 | 需要下载 | 适合 |
-|---|---|---|
-| **A. 只换 boot 分区**（推荐） | `6.1boot.img`（**40 MB**） | 已经刷了官方 Debian 6.1 镜像 |
-| **B. 整机镜像** | `6.1update.img`（4.46 GB） | 想要开箱即用 |
-
-两条路径最终都要跑一次 `scripts/setup_device.sh`（装依赖、编译、装服务）。
+实测官方 **`tspi-1m-kernel6.1-debian-3.1inch-mipi-20260331.img`** 已经带 3.1" MIPI
+面板支持，刷完直接跑本项目的 `setup_device.sh` 即可（我们在这套镜像上验证通过）。
 
 ---
 
-## 路径 A：只刷 boot 分区（40 MB）
+## 1. 下载官方镜像
 
-### 文件
+立创泰山派资料下载中心：<https://wiki.lckfb.com/zh-hans/tspi-rk3566/download-center.html>
 
-| 文件 | 大小 | SHA256 |
-|---|---|---|
-| `6.1boot.img` | 41 563 648 B | `fc461a426906efa87ea61dbe97b0a0fed448ea76fb4f6eccfdc8e1e3166f9b64` |
+- 百度网盘：<https://pan.baidu.com/s/5m1jN3xFWAu_8qbUbidNeMw>
+- 路径：`立创·泰山派开发板资料 / 第06章.【立创·泰山派】系统镜像 / kernel6.1 / 【镜像】Debian12 /`
+- 文件：**`tspi-1m-kernel6.1-debian-3.1inch-mipi-20260331.img`**（4.46 GB）
 
-校验：
+同目录下还有 HDMI 版和 `6.1boot.img` 等，**不要选错**：
 
-```bash
-sha256sum 6.1boot.img
-# Windows: Get-FileHash -Algorithm SHA256 6.1boot.img
+| 文件 | 说明 |
+|---|---|
+| `tspi-1m-kernel6.1-debian-3.1inch-mipi-20260331.img` | ✅ 3.1" MIPI 版，本项目用的就是它 |
+| `tspi-1m-kernel6.1-debian-hdmi-20260320.img` | HDMI 版，MIPI 屏点不亮 |
+| `6.1boot.img` | 只包含 boot 分区，用于单独更新内核 |
+
+---
+
+## 2. 烧录
+
+工具：**RKDevTool** + **DriverAssitant**（同在资料包 `第06章` 目录）。
+
+1. 板子断电，USB 线接 Type-C（OTG）口到电脑；
+2. 按住 **Recovery/SW** 键，再上电，保持 3 秒后松开；
+3. RKDevTool 显示「发现一个 LOADER 设备」；
+4. 切到 **「升级固件」** → 固件选 `.img` → **「升级」**；
+5. 等待「下载完成」（约 3–6 分钟），板子自动重启。
+
+默认账号 **`linaro` / `linaro`**（root 同密码）。
+
+---
+
+## 3. 两个必踩的坑（官方镜像本身的问题）
+
+### sshd 起不来：没有 host key
+
+现象：`ssh: connect to host ... port 22: Connection refused`，串口里看：
+
+```
+sshd: no hostkeys available -- exiting
 ```
 
-里面是**内核 6.1.141 + 设备树**，已确认包含 3.1" 面板节点
-（`simple-panel-dsi`、`dsi1_panel`、`panel-init-sequence`）。
-
-### 步骤
-
-1. 先按官方教程把 **Debian 6.1 镜像**刷进板子（RKDevTool「升级固件」）；
-2. 重新进入 Loader 模式，RKDevTool 切到 **「下载镜像」** 页；
-3. 在分区表里找到 **`boot`** 分区，勾选它，右侧「...」选 `6.1boot.img`；
-4. 点 **「执行」**，只写 boot 分区（几秒完成）；
-5. 重启，屏幕应点亮。
-
-> 内核版本必须与 boot.img 一致（6.1.141）。板子上的模块直接放在 `/lib/modules/`
-> （不带版本目录），所以换 boot 分区不会因为模块路径不匹配而失效。
-
-### 之后
+解决：
 
 ```bash
-git clone <本项目仓库> ~/linux-app && cd ~/linux-app
+ssh-keygen -A
+systemctl restart ssh
+```
+
+（`setup_device.sh` 会先检查并自动处理。）
+
+### 机芯网卡没被 NetworkManager 接管
+
+官方镜像首次启动时 `usb0`（机芯的 NCM 网卡）是 `unavailable` 状态，
+要么不配 IP，要么 DHCP 等不到，导致上位程序连不上机芯。
+
+解决（`setup_device.sh` 已包含）：
+
+```bash
+nmcli device set usb0 managed yes
+nmcli con mod 4117 connection.autoconnect yes
+nmcli con up 4117
+```
+
+检查：
+
+```bash
+ip -4 addr show usb0        # 应为 192.168.64.32/24
+ping -c2 192.168.64.64
+```
+
+---
+
+## 4. 部署本项目
+
+```bash
+git clone <本项目仓库> ~/linux-app
+cd ~/linux-app
 bash scripts/setup_device.sh
 ```
 
----
+脚本依次完成：
 
-## 路径 B：整机镜像（4.46 GB）
+1. 检查架构（aarch64 / Debian）
+2. 生成 SSH host key（如果缺）
+3. `apt-get install --no-upgrade` 装依赖（**不升级已装包**，避免把 network-manager 顶掉导致断网）
+4. `scripts/fetch_lvgl.sh` 拉 LVGL 9.2.2（GitHub → Gitee 兜底）
+5. 编译
+6. 写 udev 规则把机芯网卡固定成 `usb0`，建 `192.168.64.32/24` 的 NM 连接并**激活**
+7. 关闭 lightdm、切 `multi-user.target`、装 systemd 服务并启动
 
-| 文件 | 大小 | SHA256 |
-|---|---|---|
-| `6.1update.img` | 4 787 542 602 B | `05cc5eb63dd44c76d4200449d7b323fa8540d0b1cba87eb2d92590a4ddd0f021` |
+跑完屏幕应显示热像画面，日志里能看到：
 
-1. RKDevTool 切到 **「升级固件」** 页；
-2. 「固件」选 `6.1update.img`；
-3. 「升级」，等待「下载完成」（约 3~6 分钟）；
-4. 板子自动重启，默认账号 **`linaro` / `linaro`**（root 同密码）。
-
-然后同样跑一次 `scripts/setup_device.sh`。
-
-> 4.46 GB 超过 GitHub Release 单文件 2 GB 上限，需要分卷（`7z a -v1500m`）
-> 或用网盘分享；40 MB 的 `6.1boot.img` 可以直接作为 Release 附件，更推荐。
-
----
-
-## 进入 Loader / Maskrom 模式
-
-1. 板子**断电**；
-2. USB 线接板子的 **Type-C（OTG）** 口与电脑；
-3. 按住 **Recovery/SW** 键不放，再上电，保持 3 秒后松开；
-4. RKDevTool 底部显示「发现一个 LOADER 设备」。
-
-工具与驱动（`RKDevTool`、`DriverAssitant`）在立创泰山派资料包的
-`第06章.【立创·泰山派】系统镜像` 目录里。
-
----
-
-## 机芯设置
-
-机芯要先切到 **NCM 模式**，并把 IP 改成 `192.168.64.64`（出厂多为 UVC 模式或 `10.0.0.x`）。
-改法见 [ncm_switch.md](ncm_switch.md)，接口见 [4117_isapi_verified.md](4117_isapi_verified.md)。
-
-首次上电后如果屏幕不亮：
-
-```bash
-# 1) 确认机芯链路起来了
-ip -4 addr show usb0        # 应为 192.168.64.32/24
-ping -c2 192.168.64.64
-
-# 2) 确认没有 X 占着 DRM
-systemctl get-default       # 应为 multi-user.target
-pgrep -a lightdm || echo "lightdm 已关闭"
-
-# 3) 看服务日志
-journalctl -u tb4117.gui.service -b -n 40
+```
+relay: :8081 -> 192.168.64.64:80
+rtsp: rtsp 320x240 codec=mjpeg
+[..] frames=258 max=27.0 min=22.1 ctr=24.7
 ```
 
 ---
 
-## 关于镜像的授权
+## 5. 机芯设置
 
-镜像是基于立创泰山派开源的 Linux SDK 自编译的（内核 6.1 + 3.1" 面板 DTS），
-内核遵循 **GPL-2.0**；修改点（面板设备树、触摸、GP7101 背光）都在本仓库与
-资料包中可查。分发镜像时请保留相同的开源义务。
+机芯需要先切到 **NCM 模式**，IP 改为 `192.168.64.64`（出厂多为 UVC 模式或 `10.0.0.x`）。
+改法见 [ncm_switch.md](ncm_switch.md)，接口清单见 [4117_isapi_verified.md](4117_isapi_verified.md)。
+
+## 6. 屏幕不亮时
+
+```bash
+systemctl get-default          # 应为 multi-user.target
+pgrep -a lightdm || echo ok    # 不应有输出
+journalctl -u tb4117.gui.service -b -n 40
+```
+
+如果 Xorg 还占着 DRM，`/dev/dri/card0` 会被 `lightdm` 持有，LVGL 无法提交画面。

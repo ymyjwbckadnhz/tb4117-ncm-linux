@@ -461,8 +461,19 @@ static int rtsp_open_stream(void)
     av_dict_set(&opts, "stimeout", "3000000", 0);      /* microseconds */
     av_dict_set(&opts, "max_delay", "500000", 0);
 
-    if (avformat_open_input(&g_fmt, RTSP_URL, NULL, &opts) < 0) {
+    int rc = avformat_open_input(&g_fmt, RTSP_URL, NULL, &opts);
+    if (rc < 0) {
+        char err[256] = { 0 };
+        av_strerror(rc, err, sizeof(err));
+        static time_t last_log;
+        time_t now = time(NULL);
+        if (now - last_log >= 5) {
+            last_log = now;
+            printf("rtsp: open failed: %s\n", err);
+            fflush(stdout);
+        }
         av_dict_free(&opts);
+        g_fmt = NULL;
         return -1;
     }
     av_dict_free(&opts);
