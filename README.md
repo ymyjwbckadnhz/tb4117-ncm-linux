@@ -57,8 +57,17 @@
 | 机芯 | 海康 TB-4117-3/S，配成 NCM 网卡 |
 | 网络 | 板子 `usb0` = 192.168.64.32，机芯 192.168.64.64 |
 
-机芯访问：`admin:REDACTED`（HTTP Digest），
-视频 `rtsp://…/Streaming/Channels/101`（MJPEG 320×240）。
+机芯访问用 HTTP Digest，**凭据不编进代码**，而是读 `~/linux-app/device.conf`：
+
+```ini
+camera=192.168.64.64
+auth=admin:你的密码
+```
+
+没有任何配置文件时会退回 `admin:admin` 并在日志里提示。
+**请先把机芯的出厂密码改掉**，再写进这个文件（`chmod 600`，已在 `.gitignore` 里）。
+
+视频：`rtsp://<auth>@<camera>:554/Streaming/Channels/101`（MJPEG 320×240）。
 
 板子侧配置（udev 固定网卡名、静态 IP、关 lightdm）见 [docs/taishanpi_setup.md](docs/taishanpi_setup.md)，
 ISAPI 实测记录见 [docs/4117_isapi_verified.md](docs/4117_isapi_verified.md)。
@@ -177,6 +186,22 @@ sudo journalctl -u tb4117.gui.service -f
 
 服务是 `/etc/systemd/system/tb4117.gui.service`（root、`Restart=always`）。
 必须关闭 lightdm 并切到 multi-user.target，否则 Xorg 占着 DRM master，屏幕全黑。
+
+### 修改机芯密码
+
+出厂默认密码一定要改。两种方式：
+
+```bash
+# 1) 机芯 Web 页（推荐，走本项目的 8081 转发）
+#    http://<板子IP>:8081/ → 系统 → 用户管理 → 修改 admin 密码
+
+# 2) ISAPI（PUT /ISAPI/Security/users/1）
+curl -u admin:<旧密码> --digest -X PUT \
+  -H "Content-Type: application/xml; charset=UTF-8" \
+  --data-binary @user.xml http://192.168.64.64/ISAPI/Security/users/1
+```
+
+改完写进 `device.conf`，然后 `sudo systemctl restart tb4117.gui.service`。
 
 ---
 

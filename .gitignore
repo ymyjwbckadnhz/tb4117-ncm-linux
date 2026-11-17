@@ -3,6 +3,7 @@ build/
 third_party/
 
 # runtime data
+device.conf
 media/
 .screen_bright
 

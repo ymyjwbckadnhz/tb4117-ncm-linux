@@ -28,15 +28,81 @@
 
 #include "lvgl/lvgl.h"
 
-#define MODULE_URL  "http://192.168.64.64"
-#define AUTH        "admin:REDACTED"
 #define IMG_W       320          /* source resolution of the module */
 #define IMG_H       240
 #define VIEW_W      480          /* what we hand to LVGL (pre-scaled) */
 #define VIEW_H      360
-#define PICTURE_URL MODULE_URL "/ISAPI/Streaming/channels/101/picture"
-#define RTSP_URL    "rtsp://admin:REDACTED@192.168.64.64:554/Streaming/Channels/101"
-#define TEMP_URL    MODULE_URL "/ISAPI/Thermal/channels/1/thermometry/1/rulesTemperatureInfo?format=json"
+
+/* ---- runtime configuration -------------------------------------------------
+ * Credentials are NOT compiled in. They are read from
+ *   ~/linux-app/device.conf   (camera=... , auth=user:password)
+ * and fall back to the camera's factory default. Keep the password out of the
+ * repository: change it on the device and only store it in that file.
+ */
+#define CONF_PATH   "/home/linaro/linux-app/device.conf"
+
+static char cfg_camera_ip[64] = "192.168.64.64";
+static char cfg_auth[128]     = "admin:admin";
+static char cfg_module_url[128];
+static char cfg_rtsp_url[256];
+static char cfg_temp_url[512];
+static int  cfg_from_file;
+
+#define AUTH        cfg_auth
+#define RTSP_URL    cfg_rtsp_url
+#define TEMP_URL    cfg_temp_url
+
+/* build "<module_url><path>" at runtime (the URL is no longer a literal) */
+#define MODULE_URI(path)                                                       \
+    ({                                                                         \
+        static __thread char _u[256];                                          \
+        snprintf(_u, sizeof(_u), "%s" path, cfg_module_url);                   \
+        _u;                                                                    \
+    })
+
+static void config_load(void)
+{
+    FILE *f = fopen(CONF_PATH, "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            char *s = line;
+            while (*s == ' ' || *s == '\t') s++;
+            if (*s == '#' || *s == '\n' || *s == 0) continue;
+
+            char *eq = strchr(s, '=');
+            if (!eq) continue;
+            *eq = 0;
+            char *key = s, *val = eq + 1;
+            char *nl = strpbrk(val, "\r\n");
+            if (nl) *nl = 0;
+            while (*val == ' ' || *val == '\t') val++;
+
+            if (!strcmp(key, "camera")) snprintf(cfg_camera_ip, sizeof(cfg_camera_ip), "%s", val);
+            else if (!strcmp(key, "auth")) snprintf(cfg_auth, sizeof(cfg_auth), "%s", val);
+        }
+        fclose(f);
+        cfg_from_file = 1;
+    }
+
+    snprintf(cfg_module_url, sizeof(cfg_module_url), "http://%s", cfg_camera_ip);
+    snprintf(cfg_rtsp_url, sizeof(cfg_rtsp_url),
+             "rtsp://%s@%s:554/Streaming/Channels/101", cfg_auth, cfg_camera_ip);
+    snprintf(cfg_temp_url, sizeof(cfg_temp_url),
+             "%s/ISAPI/Thermal/channels/1/thermometry/1/rulesTemperatureInfo?format=json",
+             cfg_module_url);
+
+    printf("config: camera=%s auth=%s (%s)\n", cfg_camera_ip,
+           strchr(cfg_auth, ':') ? "***" : "?", cfg_from_file ? "device.conf" : "defaults");
+    if (!cfg_from_file) {
+        printf("config: 未找到 %s\n", CONF_PATH);
+        printf("config: 正在用默认凭据 admin:admin；请先改掉机芯的出厂密码，\n");
+        printf("config: 然后写入 device.conf：\n");
+        printf("config:   camera=%s\n", cfg_camera_ip);
+        printf("config:   auth=admin:你的密码\n");
+    }
+    fflush(stdout);
+}
 
 static uint8_t frame_tmp[VIEW_W * VIEW_H * 2];   /* worker decodes here */
 static uint8_t frame_pending[VIEW_W * VIEW_H * 2]; /* handed to UI */
@@ -651,7 +717,7 @@ static void *matrix_thread(void *arg)
     CURL *curl = curl_easy_init();
     struct membuf buf = { 0 };
     while (running) {
-        if (http_get(curl, MODULE_URL "/ISAPI/Thermal/channels/1/thermometry/jpegPicWithAppendData?format=json",
+        if (http_get(curl, MODULE_URI("/ISAPI/Thermal/channels/1/thermometry/jpegPicWithAppendData?format=json"),
                      &buf, 8) == 0) {
             /* find the octet-stream part, then its body */
             const char *tag = "Content-Type: application/octet-stream";
@@ -747,7 +813,7 @@ static void *palette_thread(void *arg)
     struct curl_slist *hdr = NULL;
     hdr = curl_slist_append(hdr, "Content-Type: application/xml; charset=UTF-8");
 
-    curl_easy_setopt(curl, CURLOPT_URL, MODULE_URL "/ISAPI/Image/channels/1/Palettes");
+    curl_easy_setopt(curl, CURLOPT_URL, MODULE_URI("/ISAPI/Image/channels/1/Palettes"));
     curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
     curl_easy_setopt(curl, CURLOPT_USERPWD, AUTH);
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
@@ -799,7 +865,7 @@ static int color_put(int brightness, int contrast)
     struct curl_slist *hdr = NULL;
     hdr = curl_slist_append(hdr, "Content-Type: application/xml; charset=UTF-8");
 
-    curl_easy_setopt(curl, CURLOPT_URL, MODULE_URL "/ISAPI/Image/channels/1/Color");
+    curl_easy_setopt(curl, CURLOPT_URL, MODULE_URI("/ISAPI/Image/channels/1/Color"));
     curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_DIGEST);
     curl_easy_setopt(curl, CURLOPT_USERPWD, AUTH);
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
@@ -821,7 +887,7 @@ static void color_load(void)
     CURL *curl = curl_easy_init();
     if (!curl) return;
     struct membuf buf = { 0 };
-    if (http_get(curl, MODULE_URL "/ISAPI/Image/channels/1/Color", &buf, 5) == 0) {
+    if (http_get(curl, MODULE_URI("/ISAPI/Image/channels/1/Color"), &buf, 5) == 0) {
         char *xml = malloc(buf.len + 1);
         memcpy(xml, buf.data, buf.len);
         xml[buf.len] = 0;
@@ -3494,6 +3560,7 @@ int main(void)
 
     lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event1");
 
+    config_load();
     screen_init();
     font_init();
     build_ui();

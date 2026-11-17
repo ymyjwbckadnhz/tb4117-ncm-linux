@@ -156,7 +156,7 @@ cd ~/linux-app
 bash scripts/setup_device.sh
 ```
 
-脚本依次完成：
+脚本会先问你要**机芯 IP 和密码**（写进 `device.conf`，权限 600，不进仓库），然后：
 
 1. 检查架构（aarch64 / Debian）
 2. 生成 SSH host key（如果缺）

@@ -113,6 +113,27 @@ else
     echo "警告：usb0 没有拿到 192.168.64.32，请确认机芯已切到 NCM 并上电"
 fi
 
+# ---------------------------------------------------------------- credentials
+say "机芯凭据"
+CONF="$ROOT/device.conf"
+if [ -f "$CONF" ]; then
+    chmod 600 "$CONF"
+    echo "已存在 $CONF（保持不动）"
+elif [ -t 0 ]; then
+    echo "请输入机芯的登录信息（写入 $CONF，权限 600，不会进仓库）"
+    read -r -p "  机芯 IP [192.168.64.64]: " CAM_IP
+    [ -z "$CAM_IP" ] && CAM_IP=192.168.64.64
+    read -r -s -p "  机芯密码（admin 的密码）: " CAM_PW
+    echo
+    printf 'camera=%s\nauth=admin:%s\n' "$CAM_IP" "$CAM_PW" > "$CONF"
+    chmod 600 "$CONF"
+    echo "已写入 $CONF"
+else
+    printf 'camera=192.168.64.64\nauth=admin:CHANGE_ME\n' > "$CONF"
+    chmod 600 "$CONF"
+    echo "已生成模板 $CONF —— 请把 auth 改成 admin:<机芯密码>"
+fi
+
 # ---------------------------------------------------------------- service
 say "安装开机自启服务"
 bash tools/install_service.sh
