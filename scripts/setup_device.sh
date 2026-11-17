@@ -28,8 +28,35 @@ if [ -x /usr/sbin/sshd ] && [ ! -f /etc/ssh/ssh_host_ed25519_key ]; then
     sudo systemctl restart ssh || true
 fi
 
+# ---------------------------------------------------------------- network
+say "检查网络"
+online=0
+for u in https://mirrors.aliyun.com https://deb.debian.org https://mirrors.tuna.tsinghua.edu.cn; do
+    if curl -fsS -m 8 -o /dev/null "$u" 2>/dev/null; then online=1; break; fi
+done
+
+if [ "$online" != 1 ]; then
+    cat <<'EOF'
+
+未检测到外网，apt 装不了依赖。先在板子上连 WiFi：
+
+  nmcli device wifi list
+  nmcli device wifi connect "<SSID>" password "<密码>"
+  ip -4 addr show wlan1          # 确认拿到 IP
+
+没有键盘时怎么办：
+  · 插一个 USB 键盘到板子上，用 3.1 寸屏的桌面打开终端（字很小，但能敲）
+  · 或者用串口（1500000 波特率），从电脑连上去执行上面的命令
+  · 或者在电脑上先 ssh，再跑 scripts/bootstrap.ps1
+
+连上网后重新执行本脚本。
+EOF
+    exit 1
+fi
+echo "网络正常"
+
 # ---------------------------------------------------------------- deps
-say "安装依赖（需要联网）"
+say "安装依赖"
 sudo apt-get update -qq
 PKGS="build-essential cmake pkg-config libfreetype-dev \
       libcurl4-openssl-dev libjpeg62-turbo-dev libdrm-dev \

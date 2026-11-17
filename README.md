@@ -163,7 +163,7 @@ bash scripts/setup_device.sh
 |---|---|
 | **串口** | USB-TTL，**1 500 000** 波特率，`linaro`/`linaro`。首次开机没网时唯一入口 |
 | **SSH** | `ssh linaro@<板子IP>`（密码 `linaro`）。官方镜像首次开机 sshd 缺 host key，需先用串口执行 `ssh-keygen -A && systemctl restart ssh` |
-| **HDMI + 键鼠** | 官方镜像带桌面，接着用也行 |
+| **USB 键鼠** | 直接插到板子上，用 3.1" 屏的桌面开终端——**字非常小**，应急可用；有 HDMI 显示器更舒服 |
 
 详见 [docs/flash_image.md](docs/flash_image.md)。
 
