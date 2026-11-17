@@ -1,0 +1,10 @@
+* text=auto
+
+# shell scripts must stay LF: they are pushed to the board and executed there
+*.sh   text eol=lf
+*.ps1  text eol=crlf
+*.c    text eol=lf
+*.h    text eol=lf
+*.py   text eol=lf
+
+*.png  binary

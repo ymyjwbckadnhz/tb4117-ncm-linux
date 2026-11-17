@@ -1,0 +1,13 @@
+# build artefacts
+build/
+third_party/
+
+# runtime data
+media/
+.screen_bright
+
+# compiler / editor noise
+*.o
+*.log
+*.swp
+.DS_Store

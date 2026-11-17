@@ -1,0 +1,289 @@
+# linux-app · 泰山派手持热像仪
+
+泰山派（RK3566）上的原生热成像仪，**LVGL 9 + DRM** 直出 480×800 MIPI 屏，
+通过 USB-NCM 走 ISAPI 读取海康 **TB-4117-3/S** 机芯，能拿到**逐像素温度矩阵**。
+
+<p>
+<img src="docs/images/thermal.png" width="240">
+<img src="docs/images/settings.png" width="240">
+<img src="docs/images/files.png" width="240">
+</p>
+
+---
+
+## 功能
+
+| 功能 | 说明 |
+|---|---|
+| **实时热图** | RTSP MJPEG 解码 → swscale 直出 480×360 RGB565，25 fps |
+| **高低温跟踪** | `rulesTemperatureInfo` 5 Hz，画面标注最高/最低温位置 + 数值 |
+| **中心测温** | 温度矩阵中心像素，1 Hz |
+| **点测温** | 点画面添加测温点（最多 8 个），可拖动，「清除」删除 |
+| **标记开关** | 最高 / 最低 / 中心 三个标记可分别隐藏 |
+| **调色板** | 白热 / 黑热 / 铁红1 / 铁红2 / 彩虹 / 融合1 / 融合2 / 棕褐 |
+| **拍照** | 480×360 JPEG + 同名 `.json`（记录当时温度快照） |
+| **录像** | 直接封装 RTSP 的 MJPEG 帧为 AVI，**不重新编码** |
+| **文件管理** | 相册网格（缩略图 + 时间 + 视频角标），可按 全部/照片/视频 筛选，滑动浏览全部 |
+| **预览** | 全屏查看，**左右滑动切换**（带滑入动画），可删除 |
+| **对焦辅助** | Tenengrad 梯度实时评价清晰度，底部横条 + 85% 参考刻度 |
+| **亮度 / 对比度** | `/ISAPI/Image/channels/1/Color`，滑块实时下发 |
+| **屏幕亮度** | GP7101（I2C1 @0x58，负极性 PWM） |
+| **WiFi** | `nmcli` 扫描 + 密码键盘连接 |
+| **网页管理** | 实时 MJPEG 流、状态、拍照/录像、缩略图、批量下载（ZIP）/批量删除 |
+| **机芯配置页转发** | :8081 纯 TCP 转发到机芯 Web UI，另转发 554（RTSP）与 8000（私有协议） |
+| **开机自启** | systemd 服务，异常自动重启 |
+
+### 界面
+
+底部四个标签切换：
+
+| 页面 | 内容 |
+|---|---|
+| **热像** | 热图 + 三个标记 + 三测温开关 + 调色板 + 拍照/录像 + 对焦条 + 网页地址 |
+| **设置** | 顶部实时预览小窗 + 亮度/对比/屏幕滑块 + 网页地址 + 清除测温点 |
+| **网络** | WiFi 状态 + 扫描列表 + 密码弹窗 |
+| **文件** | 相册网格 + 筛选 + 预览（左右滑动）+ 删除 |
+
+---
+
+## 硬件与环境
+
+| 部件 | 说明 |
+|---|---|
+| 主板 | 立创·泰山派 RK3566 1M，Debian 12（kernel 6.1，aarch64） |
+| 屏 | 3.1" MIPI DSI，**480×800 竖屏**，DRM `/dev/dri/card0` |
+| 触摸 | `/dev/input/event1`，I2C1 @0x38 |
+| 背光 | 扩展板 SY7201 + **GP7101**（I2C1 @0x58，8 位 PWM，负极性） |
+| 机芯 | 海康 TB-4117-3/S，配成 NCM 网卡 |
+| 网络 | 板子 `usb0` = 192.168.64.32，机芯 192.168.64.64 |
+
+机芯访问：`admin:REDACTED`（HTTP Digest），
+视频 `rtsp://…/Streaming/Channels/101`（MJPEG 320×240）。
+
+板子侧配置（udev 固定网卡名、静态 IP、关 lightdm）见 [docs/taishanpi_setup.md](docs/taishanpi_setup.md)，
+ISAPI 实测记录见 [docs/4117_isapi_verified.md](docs/4117_isapi_verified.md)。
+
+---
+
+## 编译
+
+依赖：
+
+```bash
+sudo apt install build-essential cmake pkg-config libfreetype-dev \
+    libcurl4-openssl-dev libjpeg62-turbo-dev libdrm-dev \
+    libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
+```
+
+LVGL 9.2.2 不在仓库里，先拉一份：
+
+```bash
+bash scripts/fetch_lvgl.sh        # -> third_party/lvgl
+```
+
+然后在板子上编译：
+
+```bash
+bash scripts/build.sh              # 编译 + 重启服务
+bash scripts/build.sh --no-restart # 只编译
+```
+
+**在 PC 上开发推荐**一键部署（只推改动文件 + 增量编译，端到端约 8 秒）：
+
+```powershell
+.\scripts\deploy.ps1
+.\scripts\deploy.ps1 -NoRestart
+```
+
+| 场景 | 耗时（RK3566） |
+|---|---|
+| 无改动 | 1–2 s |
+| 只改 `src/main.c` | 6 s |
+| 全量（首次 / 改 `lv_conf.h`） | 52 s |
+
+> `CMakeLists.txt` 关掉了 LVGL 的 demos / examples / thorvg，且只构建
+> `--target tb4117_verify`，否则每次都会编几百个示例文件。
+
+---
+
+## 运行与部署
+
+```bash
+sudo ./build/tb4117_verify          # 手动跑
+sudo bash tools/install_service.sh  # 装成开机自启
+sudo journalctl -u tb4117.gui.service -f
+```
+
+服务是 `/etc/systemd/system/tb4117.gui.service`（root、`Restart=always`）。
+必须关闭 lightdm 并切到 multi-user.target，否则 Xorg 占着 DRM master，屏幕全黑。
+
+---
+
+## 架构
+
+```
+main（LVGL 线程）
+├── lv_timer_handler() + update_ui()     界面刷新
+├── video_thread   RTSP → MJPEG 解码 → sws → RGB565(480×360) → 共享帧缓冲
+│                  顺带算对焦值、按需写 AVI、给网页流留一份原始帧
+├── temp_thread    rulesTemperatureInfo 5 Hz（最高/最低/平均 + 坐标）
+├── matrix_thread  jpegPicWithAppendData 1 Hz（160×120 float32 矩阵）
+├── color_thread   亮度/对比度下发（120 ms 去抖）
+├── http_thread    :8080 网页与接口
+├── proxy_thread   :8081→80 / :554→554 / :8000→8000 纯 TCP 转发
+└── relay 线程     每个网页流连接、每个转发连接各一个
+```
+
+采集线程只写共享结构（互斥量保护），LVGL 线程负责搬运和绘制。
+nmcli、拍照、录像等阻塞操作都在工作线程里，不阻塞界面。
+
+---
+
+## 网页接口
+
+浏览器打开 `http://<板子IP>:8080/`。
+
+| 接口 | 说明 |
+|---|---|
+| `GET /` | 管理页面 |
+| `GET /stream.mjpg` | MJPEG 实时流（25 fps） |
+| `GET /preview.jpg` | 单帧 JPEG（缓存 200 ms） |
+| `GET /status` | `{"recording":0,"frames":115,"files":5,"focus":255}` |
+| `GET /files.json` | 文件列表 |
+| `GET /poster?f=` | 视频首帧封面 |
+| `GET /zip?f=A&f=B` | 打包下载 |
+| `GET /files/<名字>` | 下载文件 |
+| `GET /delete?f=` | 删除（照片会连带删 .json） |
+| `GET /capture` · `/record/start` · `/record/stop` | 拍照 / 录像 |
+| `GET /color?b=60&c=70` · `/screen?b=50` | 调图像 / 屏幕亮度 |
+| `GET /wifi/scan` · `/wifi/status` | WiFi |
+| `GET /preview?f=` · `/page?p=0..3` · `/slide?d=1` | 调试用：开预览、切页、触发滑动 |
+
+文件落在 `~/linux-app/media/`：
+
+- `photo_YYYYmmdd_HHMMSS.jpg` — 480×360 热图（不含 UI 覆盖层）
+- `photo_YYYYmmdd_HHMMSS.json` — `{"max":…,"min":…,"avg":…,"center":…}`
+- `video_YYYYmmdd_HHMMSS.avi` — 320×240 MJPEG 25 fps，VLC 可直接播
+
+机芯配置页与端口转发：
+
+| 板子端口 | 机芯端口 | 用途 |
+|---|---|---|
+| 8081 | 80 | 机芯 Web 配置页 |
+| 554 | 554 | RTSP：`rtsp://<板子IP>:554/Streaming/Channels/101` |
+| 8000 | 8000 | 海康私有协议 |
+
+---
+
+## 若干实现细节（踩过的坑）
+
+### 温度矩阵
+
+`jpegPicWithAppendData?format=json` 返回 multipart：JSON + JPEG +
+**76800 B = 160×120 个 float32**，追加段就是逐像素温度，点测温直接查表。
+
+### 录像零编码
+
+RTSP 源就是 MJPEG，把 `AVPacket` 原样写进自己实现的 AVI（RIFF）容器，
+不解码不编码，录像时 CPU 几乎不增加。
+
+### 网页实时流
+
+用 **MJPEG 长连接**（`multipart/x-mixed-replace`）而不是定时刷 `<img>`：
+轮询每条请求都要建连 + 编码，且我们的 HTTP 服务是单线程的，会被堵住。
+
+转发的是**机芯原始 JPEG 帧**（双缓冲 + 版本号），不重新编码——
+第一版按 320×240 编码推流，25 fps 直接吃满一个 CPU 核（100%），改成转发后只多 6%。
+
+实测：24.4 fps，329 KB/s。
+
+### 背光 GP7101
+
+面板背光不走 SoC 的 pwm5，而是扩展板 SY7201 + GP7101（I2C 转 PWM）。
+驱动接的是**负极性**输出，占空比要镜像：
+
+```c
+int raw = (100 - pct) * 255 / 100;   /* 值越大越暗 */
+uint8_t buf[2] = { 0x03, raw };      /* 寄存器 0x03 = 8 位 PWM */
+```
+
+### 字体
+
+界面统一用 **FreeType 加载系统 TTF**（文泉驿正黑，全 CJK），中英文同一字库，
+基线天然对齐；字号 26（主）/ 20（次）。
+
+找不到 TTF 时退回编译进二进制的 `src/lv_font_cn_22.c`
+（只含源码里出现的汉字，用 `python tools/gen_font.py` 重新生成）。
+
+### LVGL 时钟源
+
+`lv_linux_drm` **不会**设置 tick，不调用 `lv_tick_set_cb()` 的话
+`lv_tick_get()` 恒为 0，所有动画和定时器都冻在起点：
+
+```c
+static uint32_t lv_tick_ms(void) {
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000u + ts.tv_nsec / 1000000u;
+}
+lv_init();
+lv_tick_set_cb(lv_tick_ms);
+```
+
+### 机芯 Web 页转发
+
+机芯的登录是挑战-响应会话，**HTTP 层代理会打断会话绑定**（会报"网络异常"）。
+改成**纯 TCP 转发**（每连接一个线程，`select()` 双向搬字节）后，浏览器和机芯就是直连，
+Cookie、Digest、chunked 全部端到端正确。
+
+### 其他
+
+- 弹窗打开时冻结热图重绘，否则 25 fps 的画面会把弹窗刷花；
+- 设置页预览是把 480×360 抽稀成 320×240 的独立缓冲，显示时不缩放（缩放变换会撕裂）；
+- 预览视频限流 10 fps，避免局部重绘被拆成多段产生接缝。
+
+---
+
+## 已知限制
+
+| 限制 | 说明 |
+|---|---|
+| 点测温 1 Hz | 与中心测温共用温度矩阵 |
+| 照片不含标注 | 存纯热图，温度在同名 json |
+| 录像不含 UI | 只录机芯原始画面 |
+| 测温点不持久化 | 重启清空 |
+| 预览视频 10 fps | 限流换取无撕裂 |
+| 机芯自带预览不可用 | 它用 ActiveX 插件，现代浏览器不支持；用 :8080 的流代替 |
+
+---
+
+## 目录
+
+```
+linux-app/
+├── src/
+│   ├── main.c             全部逻辑（单文件）
+│   └── lv_font_cn_22.c    中文字体 fallback
+├── scripts/
+│   ├── fetch_lvgl.sh      下载 LVGL 9.2.2
+│   ├── build.sh           板子上编译 + 重启
+│   └── deploy.ps1         PC 上一键部署
+├── tools/
+│   ├── gen_font.py        扫描源码汉字生成字体子集
+│   ├── grab.py            抓屏存 PNG
+│   ├── drm_grab.c         直接读 DRM plane 截图
+│   ├── diag_display.sh    黑屏排查
+│   ├── install_service.sh 安装 systemd 服务
+│   └── run_app.sh         前台运行
+├── docs/                  板子配置、ISAPI 实测、界面截图
+├── lv_conf.h
+├── CMakeLists.txt
+└── third_party/lvgl       LVGL 9.2.2（用 scripts/fetch_lvgl.sh 拉取）
+```
+
+---
+
+## 许可证
+
+Apache-2.0，见 [LICENSE](LICENSE)。
+
+**非官方项目**，与海康威视及任何模组厂商无关。
