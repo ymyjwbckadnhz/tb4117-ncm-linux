@@ -85,6 +85,11 @@ ISAPI 实测记录见 [docs/4117_isapi_verified.md](docs/4117_isapi_verified.md)
 
 ## 编译
 
+```bash
+git clone https://github.com/ymyjwbckadnhz/tb4117-ncm-linux.git ~/linux-app
+cd ~/linux-app
+```
+
 依赖：
 
 ```bash

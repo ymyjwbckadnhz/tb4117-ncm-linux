@@ -70,7 +70,7 @@ nmcli con up 4117
 ## 4. 部署本项目
 
 ```bash
-git clone <本项目仓库> ~/linux-app
+git clone https://github.com/ymyjwbckadnhz/tb4117-ncm-linux.git ~/linux-app
 cd ~/linux-app
 bash scripts/setup_device.sh
 ```
