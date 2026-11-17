@@ -507,7 +507,7 @@ static __attribute__((unused)) int decode_jpeg_rgb565(const uint8_t *jpg, size_t
 /* ---------------- RTSP (libavformat) ---------------- */ /* tweak */
 
 static AVFormatContext *g_fmt;
-static int rtsp_backoff_ms = 1000;   /* grows while the module stays unreachable */
+static time_t rtsp_fail_since;   /* 0 while the stream is healthy */
 static AVCodecContext *g_dec;
 static struct SwsContext *g_sws;
 static int g_vidx = -1;
@@ -536,7 +536,7 @@ static int rtsp_open_stream(void)
         time_t now = time(NULL);
         if (now - last_log >= 10) {
             last_log = now;
-            printf("rtsp: open failed: %s (retry in %d ms)\n", err, rtsp_backoff_ms);
+            printf("rtsp: open failed: %s\n", err);
             fflush(stdout);
         }
         av_dict_free(&opts);
@@ -564,7 +564,7 @@ static int rtsp_open_stream(void)
                            SWS_FAST_BILINEAR, NULL, NULL, NULL);
     if (!g_sws) return -1;
 
-    rtsp_backoff_ms = 1000;
+    rtsp_fail_since = 0;
     printf("rtsp: %s %dx%d codec=%s\n", g_fmt->iformat->name,
            g_dec->width, g_dec->height, codec->name);
     fflush(stdout);
@@ -626,11 +626,16 @@ static void *video_thread(void *arg)
 
     while (running) {
         if (!g_fmt && rtsp_open_stream() != 0) {
-            /* Back off while the module is unreachable. Hammering it once per
-             * second keeps a wedged module busy and floods the log. */
-            usleep((useconds_t)rtsp_backoff_ms * 1000);
-            rtsp_backoff_ms *= 2;
-            if (rtsp_backoff_ms > 15000) rtsp_backoff_ms = 15000;
+            /* The module needs 1-2 minutes after power-on before its RTSP
+             * service listens, so retry every 2s for the first half minute and
+             * only then start backing off (max 15s). */
+            time_t nowt = time(NULL);
+            if (!rtsp_fail_since) rtsp_fail_since = nowt;
+            int waited = (int)(nowt - rtsp_fail_since);
+            int delay_ms = (waited < 30) ? 2000
+                         : (waited < 60) ? 5000
+                         : (waited < 120) ? 10000 : 15000;
+            usleep((useconds_t)delay_ms * 1000);
             continue;
         }
 
@@ -2244,6 +2249,7 @@ static struct wifi_ap g_aps[MAX_AP];
 static int g_ap_count = 0;
 static lv_obj_t *wifi_list;
 static lv_obj_t *wifi_status_lbl;
+static lv_obj_t *cam_hint;   /* "module not answering" overlay */
 static lv_obj_t *wifi_hint_lbl;
 static lv_obj_t *wifi_modal;
 static lv_obj_t *wifi_ta;
@@ -3035,6 +3041,17 @@ static void build_page_thermal(lv_obj_t *scr)
     lv_obj_add_event_cb(img_touch, img_event_cb, LV_EVENT_SHORT_CLICKED, NULL);
     lv_obj_add_event_cb(img_touch, img_event_cb, LV_EVENT_RELEASED, NULL);
 
+    cam_hint = lv_label_create(page_thermal);
+    lv_label_set_text(cam_hint, "机芯未连接，重试中…");
+    lv_obj_set_style_text_font(cam_hint, FONT_CN, 0);
+    lv_obj_set_style_text_color(cam_hint, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_bg_color(cam_hint, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(cam_hint, 200, 0);
+    lv_obj_set_style_pad_all(cam_hint, 10, 0);
+    lv_obj_set_style_radius(cam_hint, 6, 0);
+    lv_obj_align(cam_hint, LV_ALIGN_TOP_MID, 0, 300);
+    lv_obj_add_flag(cam_hint, LV_OBJ_FLAG_HIDDEN);
+
     dot_max = make_dot(page_thermal, lv_color_hex(0xFF4444));
     dot_min = make_dot(page_thermal, lv_color_hex(0x44A0FF));
     dot_ctr = make_dot(page_thermal, lv_color_hex(0x44FF88));
@@ -3556,9 +3573,21 @@ static void update_ui(void)
     }
 
     static int last_count = -1;
+    static int hint_count = -1;
+    static time_t hint_t = 0;
     static time_t last_t = 0;
     static time_t last_log = 0;
     time_t now = time(NULL);
+    if (cam_hint) {
+        if (frame_count != hint_count) {      /* frames still arriving */
+            hint_count = frame_count;
+            hint_t = now;
+            lv_obj_add_flag(cam_hint, LV_OBJ_FLAG_HIDDEN);
+        } else if (now - hint_t >= 3) {
+            lv_obj_remove_flag(cam_hint, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
     if (now != last_t) {
         int fps = last_t ? (frame_count - last_count) : 0;
         snprintf(buf, sizeof(buf), "%d fps", fps);
