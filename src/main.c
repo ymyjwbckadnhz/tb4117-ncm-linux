@@ -507,7 +507,16 @@ static __attribute__((unused)) int decode_jpeg_rgb565(const uint8_t *jpg, size_t
 /* ---------------- RTSP (libavformat) ---------------- */ /* tweak */
 
 static AVFormatContext *g_fmt;
-static time_t rtsp_fail_since;   /* 0 while the stream is healthy */
+/* The board has no RTC: the wall clock jumps forward by months when NTP syncs.
+ * Anything that measures an interval must use the monotonic clock instead. */
+static int64_t mono_sec(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec;
+}
+
+static int64_t rtsp_fail_since;   /* 0 while the stream is healthy */
 static AVCodecContext *g_dec;
 static struct SwsContext *g_sws;
 static int g_vidx = -1;
@@ -629,7 +638,7 @@ static void *video_thread(void *arg)
             /* The module needs 1-2 minutes after power-on before its RTSP
              * service listens, so retry every 2s for the first half minute and
              * only then start backing off (max 15s). */
-            time_t nowt = time(NULL);
+            int64_t nowt = mono_sec();
             if (!rtsp_fail_since) rtsp_fail_since = nowt;
             int waited = (int)(nowt - rtsp_fail_since);
             int delay_ms = (waited < 30) ? 2000
@@ -2259,7 +2268,7 @@ static char g_ssid_sel[64];
 static char g_ip[64] = "";
 static volatile int wifi_dirty = 0;
 static volatile int wifi_scanning = 0;
-static time_t wifi_poll_ts;
+static uint32_t wifi_poll_ts;
 static volatile int wifi_connecting = 0;
 
 static void shell_exec(const char *cmd, char *out, size_t out_n)
@@ -3511,8 +3520,8 @@ static void update_ui(void)
      * startup shows "WiFi: --". Keep polling while the page is open, and retry
      * the scan if the list came back empty because the adapter was still down. */
     {
-        time_t nowt = time(NULL);
-        if (nowt - wifi_poll_ts >= 5) {
+        uint32_t nowt = lv_tick_get();          /* monotonic, uint32 wraps safely */
+        if ((uint32_t)(nowt - wifi_poll_ts) >= 5000) {
             wifi_poll_ts = nowt;
 
             char prev[128];
@@ -3577,20 +3586,21 @@ static void update_ui(void)
 
     static int last_count = -1;
     static int hint_count = -1;
-    static time_t hint_t = 0;
+    static uint32_t hint_ms = 0;
     static time_t last_t = 0;
     static time_t last_log = 0;
     time_t now = time(NULL);
+    uint32_t now_ms = lv_tick_get();
     if (cam_hint) {
         if (frame_count != hint_count) {      /* frames still arriving */
             hint_count = frame_count;
-            hint_t = now;
+            hint_ms = now_ms;
             lv_obj_add_flag(cam_hint, LV_OBJ_FLAG_HIDDEN);
-        } else if (now - hint_t >= 3) {
-            /* the module needs ~2 minutes after power-on before its RTSP server
+        } else if ((uint32_t)(now_ms - hint_ms) >= 3000) {
+            /* the module needs a while after power-on before its RTSP server
              * listens; show the wait so it does not look like a hang */
             static long shown = -1;
-            long secs = (long)(now - hint_t);
+            long secs = (long)((uint32_t)(now_ms - hint_ms) / 1000);
             if (secs != shown) {
                 shown = secs;
                 char hb[64];
