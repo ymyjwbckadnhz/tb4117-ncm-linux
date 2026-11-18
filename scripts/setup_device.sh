@@ -150,6 +150,15 @@ else
     echo "已生成模板 $CONF —— 请把 auth 改成 admin:<机芯密码>"
 fi
 
+# ---------------------------------------------------------------- probe
+say "安装机芯监控日志（跨重启保留）"
+sudo sed -i 's/^#\?SystemMaxUse=.*/SystemMaxUse=200M/' /etc/systemd/journald.conf 2>/dev/null || true
+grep -q '^SystemMaxUse=' /etc/systemd/journald.conf 2>/dev/null || \
+    echo 'SystemMaxUse=200M' | sudo tee -a /etc/systemd/journald.conf >/dev/null
+sudo systemctl restart systemd-journald 2>/dev/null || true
+bash tools/install_probe.sh >/dev/null 2>&1 || echo "  探针安装失败（不影响主程序）"
+systemctl is-active --quiet tb4117-probe.service && echo "  探针运行中，日志 /var/log/tb4117/probe.log"
+
 # ---------------------------------------------------------------- service
 say "安装开机自启服务"
 bash tools/install_service.sh
