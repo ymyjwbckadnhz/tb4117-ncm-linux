@@ -1,13 +1,11 @@
 #!/bin/bash
-# Persistent watchdog log for the TB-4117 module.
+# Persistent watchdog for the TB-4117 module.
 #
-# Records, across reboots and power cuts, when the module answers on
-# ping / HTTP / RTSP. Installed as tb4117-probe.service so it starts at boot.
+# Logs, across reboots and power cuts, when the module answers on
+# ping / HTTP / RTSP, and reboots it through ISAPI when it is stuck in the
+# "network alive, RTSP never starts" state that a too-short power cut leaves.
 #
 #   /var/log/tb4117/probe.log       current log (rotated to .1 at 1 MB)
-#
-# Nothing here talks to the module faster than once every 2 s, and the
-# authenticated sample (its uptime) is taken once a minute.
 
 LOG_DIR=/var/log/tb4117
 LOG=$LOG_DIR/probe.log
@@ -17,14 +15,17 @@ mkdir -p "$LOG_DIR"
 
 # ---------------------------------------------------------------- config
 IP=192.168.64.64
+AUTH=admin:admin
 if [ -r "$CONF" ]; then
-    v=$(sed -n 's/^camera=//p' "$CONF" | head -1)
-    [ -n "$v" ] && IP=$v
+    v=$(sed -n 's/^camera=//p' "$CONF" | head -1); [ -n "$v" ] && IP=$v
+    v=$(sed -n 's/^auth=//p'   "$CONF" | head -1); [ -n "$v" ] && AUTH=$v
 fi
 
+STUCK_SECONDS=${STUCK_SECONDS:-150}   # http up but no rtsp for this long -> reboot
+REBOOT_COOLDOWN=${REBOOT_COOLDOWN:-600}
+
 # ---------------------------------------------------------------- helpers
-boot_id() { tr -d '-' < /proc/sys/kernel/random/boot_id; }
-BOOT=$(boot_id)
+BOOT=$(tr -d '-' < /proc/sys/kernel/random/boot_id)
 uptime_s() { cut -d. -f1 /proc/uptime; }
 
 rotate() {
@@ -42,25 +43,32 @@ say() {
 probe_ping() { ping -c1 -W1 "$IP" >/dev/null 2>&1 && echo up || echo down; }
 probe_tcp()  { timeout 2 bash -c "exec 3<>/dev/tcp/$IP/$1" 2>/dev/null && echo up || echo down; }
 
-module_clock() {   # the module has no RTC: this is effectively its uptime
+module_clock() {   # the module has no RTC: its Date header is effectively uptime
     timeout 3 curl -s -D - -o /dev/null "http://$IP/" 2>/dev/null \
         | tr -d '\r' | sed -n 's/^[Dd]ate: //p' | head -1
 }
 
+module_reboot() {
+    local code
+    code=$(timeout 12 curl -s -o /dev/null -w '%{http_code}' --digest -u "$AUTH" \
+                -X PUT "http://$IP/ISAPI/System/reboot" 2>/dev/null)
+    say "SELF-HEAL: PUT /ISAPI/System/reboot -> $code"
+    return 0
+}
+
 # ---------------------------------------------------------------- start-up
 say "=== probe start (pid $$) ==="
-say "board: $(uname -r) $(. /etc/os-release 2>/dev/null; echo "$PRETTY_NAME")"
 say "module ip: $IP  conf: $([ -r "$CONF" ] && echo yes || echo no)"
 say "usb: $(dmesg 2>/dev/null | grep -c 'usb 1-1: new high-speed') enumerations since boot"
 while read -r l; do say "  dmesg| $l"; done < <(dmesg 2>/dev/null | grep -E 'usb 1-1' | tail -6)
 
-# log a clean shutdown marker (Ctrl-C / systemctl stop / reboot)
 trap 'say "probe: stopping (board shutting down?)"; exit 0' TERM INT
 
 # ---------------------------------------------------------------- loop
 ping_st=init; http_st=init; rtsp_st=init
+rtsp_down_at=0; last_reboot=0
 last_clock=""; last_beat=0
-fail_since=0
+healed=0
 
 while :; do
     p=$(probe_ping)
@@ -74,14 +82,29 @@ while :; do
         say "rtsp:554  $rtsp_st -> $r"
         rtsp_st=$r
         if [ "$r" = "up" ]; then
-            say "MODULE READY (rtsp listening) after $(uptime_s)s board uptime"
-            fail_since=0
-        else
-            fail_since=$(uptime_s)
+            say "MODULE READY after $(uptime_s)s board uptime"
+            rtsp_down_at=0
         fi
     fi
 
     now=$(date +%s)
+
+    # half-reset state: the module answers on HTTP but its RTSP server never
+    # starts. A short power cut leaves it like this; an ISAPI reboot clears it.
+    if [ "$ping_st" = up ] && [ "$http_st" = up ] && [ "$rtsp_st" = down ]; then
+        [ "$rtsp_down_at" -eq 0 ] && rtsp_down_at=$now
+        if [ $((now - rtsp_down_at)) -ge "$STUCK_SECONDS" ] && \
+           [ $((now - last_reboot)) -ge "$REBOOT_COOLDOWN" ]; then
+            say "stuck: http up but rtsp down for $((now - rtsp_down_at))s -> rebooting module"
+            module_reboot
+            last_reboot=$(date +%s)
+            rtsp_down_at=0
+            healed=$((healed + 1))
+        fi
+    else
+        rtsp_down_at=0
+    fi
+
     if [ $((now - last_beat)) -ge 60 ]; then
         last_beat=$now
         c=$(module_clock)
@@ -89,7 +112,7 @@ while :; do
             say "module clock: $c"
             last_clock=$c
         fi
-        say "heartbeat ping=$ping_st http=$http_st rtsp=$rtsp_st$([ -n "$fail_since" ] && [ "$rtsp_st" != up ] && echo " (rtsp down since up=${fail_since}s)")"
+        say "heartbeat ping=$ping_st http=$http_st rtsp=$rtsp_st self-heal=$healed"
     fi
 
     sleep 2

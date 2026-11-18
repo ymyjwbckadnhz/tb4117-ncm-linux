@@ -377,6 +377,47 @@ Cookie、Digest、chunked 全部端到端正确。
 
 ---
 
+## 机芯复位与自愈
+
+**断电时间不够会导致机芯"半复位"**：它的网络栈活过来了（ping、80 端口都通），
+但 RTSP 服务始终不启动，于是界面一直停在"机芯启动中…"。
+
+实测 6 次上电里 2 次踩中：
+
+| 上电 | RTSP 就绪 |
+|---|---|
+| 3 次 | up=31~32 秒 |
+| **2 次** | **从未就绪**（半复位） |
+
+**正确做法：断电后等 10~15 秒再上电**，让机芯的储能放完。
+
+### 自动自愈
+
+`tb4117-probe.service` 每 2 秒采样 ping / 80 / 554。
+如果 **ping 和 80 都通、但 554 连续 150 秒不通**，就通过 ISAPI 给机芯下发重启
+（`PUT /ISAPI/System/reboot`），10 分钟内最多一次。
+
+```
+stuck: http up but rtsp down for 152s -> rebooting module
+SELF-HEAL: PUT /ISAPI/System/reboot -> 200
+MODULE READY after 268s board uptime
+```
+
+不需要人工干预，界面上的计时会继续走，连上后自动出画面。
+
+### 手动排查
+
+```bash
+sudo tail -f /var/log/tb4117/probe.log     # 跨重启保留，1 MB 轮转
+python3 tools/analyze_probe.py             # 按启动分组汇总
+bash tools/module_reboot.sh                # 手动重启机芯并等待 RTSP
+```
+
+日志每次开机都会记录 USB 枚举行、机芯 IP、以及机芯自己的时钟（它没有 RTC，
+Date 头就是它的开机时长），所以能区分"服务没起来"和"机芯在反复重启"。
+
+---
+
 ## 已知限制
 
 | 限制 | 说明 |
