@@ -3042,14 +3042,17 @@ static void build_page_thermal(lv_obj_t *scr)
     lv_obj_add_event_cb(img_touch, img_event_cb, LV_EVENT_RELEASED, NULL);
 
     cam_hint = lv_label_create(page_thermal);
-    lv_label_set_text(cam_hint, "机芯未连接，重试中…");
+    lv_label_set_text(cam_hint, "机芯启动中… 0 秒");
     lv_obj_set_style_text_font(cam_hint, FONT_CN, 0);
     lv_obj_set_style_text_color(cam_hint, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_align(cam_hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_bg_color(cam_hint, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_bg_opa(cam_hint, 200, 0);
-    lv_obj_set_style_pad_all(cam_hint, 10, 0);
-    lv_obj_set_style_radius(cam_hint, 6, 0);
-    lv_obj_align(cam_hint, LV_ALIGN_TOP_MID, 0, 300);
+    lv_obj_set_style_bg_opa(cam_hint, 210, 0);
+    lv_obj_set_style_pad_all(cam_hint, 12, 0);
+    lv_obj_set_style_radius(cam_hint, 8, 0);
+    /* fixed box: the text changes every second, auto-size would clip it */
+    lv_obj_set_size(cam_hint, 300, 56);
+    lv_obj_align(cam_hint, LV_ALIGN_TOP_MID, 0, 284);
     lv_obj_add_flag(cam_hint, LV_OBJ_FLAG_HIDDEN);
 
     dot_max = make_dot(page_thermal, lv_color_hex(0xFF4444));
@@ -3584,6 +3587,17 @@ static void update_ui(void)
             hint_t = now;
             lv_obj_add_flag(cam_hint, LV_OBJ_FLAG_HIDDEN);
         } else if (now - hint_t >= 3) {
+            /* the module needs ~2 minutes after power-on before its RTSP server
+             * listens; show the wait so it does not look like a hang */
+            static long shown = -1;
+            long secs = (long)(now - hint_t);
+            if (secs != shown) {
+                shown = secs;
+                char hb[64];
+                snprintf(hb, sizeof(hb), "机芯启动中… %ld 秒", secs);
+                lv_label_set_text(cam_hint, hb);
+                lv_obj_align(cam_hint, LV_ALIGN_TOP_MID, 0, 284);
+            }
             lv_obj_remove_flag(cam_hint, LV_OBJ_FLAG_HIDDEN);
         }
     }
