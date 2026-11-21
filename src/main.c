@@ -146,6 +146,8 @@ static struct mfile g_files[FILE_MAX];
 static volatile int page_req = -1;
 static volatile int modal_req = 0;
 static volatile int slide_req = 0;
+static volatile int spot_add_req = 0;
+static int spot_add_x, spot_add_y;
 static char *preview_req = NULL;
 static volatile int files_dirty = 0;
 /* ---------------- MJPEG AVI reader (for in-app playback) ---------------- */
@@ -376,6 +378,7 @@ static lv_obj_t *btn_clear;
 static lv_obj_t *btn_photo, *lbl_rec;
 static lv_obj_t *focus_track, *focus_fill, *focus_peak;
 static lv_obj_t *sl_bright, *sl_contrast, *sl_screen;
+static lv_obj_t *btn_overlay;
 static lv_obj_t *img_preview_sm;
 #define SMALL_W 320
 #define SMALL_H 240
@@ -405,6 +408,128 @@ static lv_obj_t *img_touch;   /* transparent hit area over the image */
 static int sw_on[3] = { 1, 1, 1 };      /* 最高 / 最低 / 中心 */
 static const char *PAL_CN[] = {"白热", "黑热", "铁红1", "铁红2", "彩虹", "融合1", "融合2", "棕褐"};
 static int shown_marker_ver = -1, shown_center_ver = -1;
+
+/* ---------------- burn spot marks into saved pixels ----------------
+ * Photos and recordings are stored without the LVGL layer, so the marks have
+ * to be drawn into the RGB565 buffer itself. A 5x7 bitmap font keeps this
+ * dependency-free and cheap enough to run per recorded frame.
+ */
+#define OVERLAY_FLAG "/home/linaro/linux-app/overlay.flag"
+static int overlay_on = 1;          /* settings toggle, persisted */
+
+static void overlay_load(void)
+{
+    FILE *f = fopen(OVERLAY_FLAG, "r");
+    if (!f) return;
+    int v = 1;
+    if (fscanf(f, "%d", &v) == 1) overlay_on = v ? 1 : 0;
+    fclose(f);
+}
+
+static void overlay_save(void)
+{
+    FILE *f = fopen(OVERLAY_FLAG, "w");
+    if (!f) return;
+    fprintf(f, "%d\n", overlay_on);
+    fclose(f);
+}
+
+/* 5 columns x 7 rows, bit per row */
+static const uint8_t glyph5x7[11][5] = {
+    { 0x3E, 0x51, 0x49, 0x45, 0x3E },   /* 0 */
+    { 0x00, 0x42, 0x7F, 0x40, 0x00 },   /* 1 */
+    { 0x42, 0x61, 0x51, 0x49, 0x46 },   /* 2 */
+    { 0x21, 0x41, 0x45, 0x4B, 0x31 },   /* 3 */
+    { 0x18, 0x14, 0x12, 0x7F, 0x10 },   /* 4 */
+    { 0x27, 0x45, 0x45, 0x45, 0x39 },   /* 5 */
+    { 0x3C, 0x4A, 0x49, 0x49, 0x30 },   /* 6 */
+    { 0x01, 0x71, 0x09, 0x05, 0x03 },   /* 7 */
+    { 0x36, 0x49, 0x49, 0x49, 0x36 },   /* 8 */
+    { 0x06, 0x49, 0x49, 0x29, 0x1E },   /* 9 */
+    { 0x00, 0x60, 0x60, 0x00, 0x00 },   /* . */
+};
+
+static void ov_px(uint8_t *buf, int w, int h, int x, int y, uint16_t c)
+{
+    if (x < 0 || y < 0 || x >= w || y >= h) return;
+    ((uint16_t *)buf)[(size_t)y * w + x] = c;
+}
+
+static int ov_glyph_idx(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c == '.') return 10;
+    return -1;
+}
+
+/* draw one glyph with a 1px black outline so it reads on any palette */
+static void ov_glyph(uint8_t *buf, int w, int h, int x, int y, int gi, int sc,
+                     uint16_t col, uint16_t ol)
+{
+    const uint8_t *g = glyph5x7[gi];
+    for (int pass = 0; pass < 2; pass++) {
+        uint16_t c = pass ? col : ol;
+        int pad = pass ? 0 : 1;
+        for (int cx = -pad; cx < 5 * sc + pad; cx++) {
+            for (int cy = -pad; cy < 7 * sc + pad; cy++) {
+                int gx = cx / sc, gy = cy / sc;
+                if (pad && !pass) {
+                    /* outline: only the ring around the glyph */
+                    if (gx >= 0 && gx < 5 && gy >= 0 && gy < 7 &&
+                        (g[gx] & (1 << gy))) continue;
+                } else {
+                    if (gx < 0 || gx >= 5 || gy < 0 || gy >= 7) continue;
+                    if (!(g[gx] & (1 << gy))) continue;
+                }
+                ov_px(buf, w, h, x + cx, y + cy, c);
+            }
+        }
+    }
+}
+
+static void ov_text(uint8_t *buf, int w, int h, int x, int y, const char *s, int sc)
+{
+    for (; *s; s++) {
+        int gi = ov_glyph_idx(*s);
+        if (gi >= 0) ov_glyph(buf, w, h, x, y, gi, sc, 0xFFFF, 0x0000);
+        x += 6 * sc;
+    }
+}
+
+static void ov_dot(uint8_t *buf, int w, int h, int cx, int cy, int r)
+{
+    for (int dy = -r - 1; dy <= r + 1; dy++)
+        for (int dx = -r - 1; dx <= r + 1; dx++) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 > (r + 1) * (r + 1)) continue;
+            uint16_t c = (d2 <= r * r) ? 0x07E0 : 0x0000;   /* green, black ring */
+            ov_px(buf, w, h, cx + dx, cy + dy, c);
+        }
+}
+
+/* Draw every valid spot (marker + temperature) scaled into a w x h buffer.
+ * spots[] live in view coordinates (VIEW_W x VIEW_H). */
+static void overlay_spots(uint8_t *buf, int w, int h)
+{
+    if (!overlay_on) return;
+
+    int sc = (w >= 400) ? 2 : 1;
+    for (int i = 0; i < spot_count; i++) {
+        if (!spots[i].valid) continue;
+
+        int x = spots[i].x * w / VIEW_W;
+        int y = spots[i].y * h / VIEW_H;
+
+        ov_dot(buf, w, h, x, y, (w >= 400) ? 5 : 3);
+
+        if (spots[i].t > -900.0f) {
+            char tb[16];
+            snprintf(tb, sizeof(tb), "%.1f", spots[i].t);
+            ov_text(buf, w, h, x + 8 * sc, y - 3 * sc, tb, sc);
+        }
+    }
+}
+
 
 static lv_image_dsc_t img_dsc;
 static int shown_version = -1;
@@ -625,6 +750,78 @@ static void compute_focus(const uint8_t *rgb565)
     g_focus = m;
 }
 
+/* ---- JPEG <-> RGB565 in memory (needed to overlay while recording) ---- */
+
+static int encode_jpeg_mem(const uint8_t *rgb565, int w, int h, int quality,
+                           uint8_t **out, size_t *out_len)
+{
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+    unsigned char *mem = NULL;
+    unsigned long mem_size = 0;
+
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_compress(&cinfo);
+    jpeg_mem_dest(&cinfo, &mem, &mem_size);
+
+    cinfo.image_width = w;
+    cinfo.image_height = h;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, quality, TRUE);
+    jpeg_start_compress(&cinfo, TRUE);
+
+    uint8_t *row = malloc((size_t)w * 3);
+    if (!row) { jpeg_destroy_compress(&cinfo); return -1; }
+
+    for (int y = 0; y < h; y++) {
+        const uint8_t *src = rgb565 + (size_t)y * w * 2;
+        for (int x = 0; x < w; x++) {
+            uint16_t v = (uint16_t)(src[x * 2] | (src[x * 2 + 1] << 8));
+            row[x * 3 + 0] = (uint8_t)(((v >> 11) & 0x1F) << 3);
+            row[x * 3 + 1] = (uint8_t)(((v >> 5) & 0x3F) << 2);
+            row[x * 3 + 2] = (uint8_t)((v & 0x1F) << 3);
+        }
+        JSAMPROW rp[1] = { row };
+        jpeg_write_scanlines(&cinfo, rp, 1);
+    }
+
+    free(row);
+    jpeg_finish_compress(&cinfo);
+    jpeg_destroy_compress(&cinfo);
+
+    *out = mem;
+    *out_len = (size_t)mem_size;
+    return 0;
+}
+
+/* Re-encode one camera frame with the spot marks burnt in. Recording normally
+ * stores the camera's own JPEG untouched (zero CPU); this path is only taken
+ * when the user asked for the overlay. */
+static uint8_t rec_ov_buf[IMG_W * IMG_H * 2];
+static uint8_t *rec_ov_jpg;
+static size_t rec_ov_len;
+
+static const uint8_t *record_frame_bytes(const uint8_t *jpg, int len, int *out_len)
+{
+    if (!overlay_on || spot_count <= 0) return jpg;
+
+    int dw = 0, dh = 0;
+    if (jpeg_mem_to_rgb565(jpg, (size_t)len, rec_ov_buf, &dw, &dh) != 0) return jpg;
+    if (dw != IMG_W || dh != IMG_H) return jpg;      /* unexpected frame size */
+
+    overlay_spots(rec_ov_buf, IMG_W, IMG_H);
+
+    free(rec_ov_jpg);
+    rec_ov_jpg = NULL;
+    if (encode_jpeg_mem(rec_ov_buf, IMG_W, IMG_H, 82, &rec_ov_jpg, &rec_ov_len) != 0)
+        return jpg;
+
+    *out_len = (int)rec_ov_len;
+    return rec_ov_jpg;
+}
+
 static void *video_thread(void *arg)
 {
     (void)arg;
@@ -680,7 +877,12 @@ static void *video_thread(void *arg)
 
         if (recording) {
             pthread_mutex_lock(&avi_lock);
-            if (g_avi) { avi_frame_unlocked(g_avi, pkt->data, pkt->size); rec_frames++; }
+            if (g_avi) {
+                int rl = pkt->size;
+                const uint8_t *rb = record_frame_bytes(pkt->data, pkt->size, &rl);
+                avi_frame_unlocked(g_avi, rb, rl);
+                rec_frames++;
+            }
             pthread_mutex_unlock(&avi_lock);
         }
 
@@ -1093,6 +1295,7 @@ static void photo_capture(void)
     char ts[32], path[256], json[256];
     stamp_now(ts, sizeof(ts));
     snprintf(path, sizeof(path), MEDIA_DIR "/photo_%s.jpg", ts);
+    overlay_spots(snap, VIEW_W, VIEW_H);      /* burn the marks into the saved pixels */
     if (save_jpeg_rgb565(path, snap, VIEW_W, VIEW_H, 90) == 0) {
         snprintf(json, sizeof(json), MEDIA_DIR "/photo_%s.json", ts);
         FILE *f = fopen(json, "w");
@@ -1787,6 +1990,15 @@ static void *http_thread(void *arg)
                         http_send(fd, "503 Service Unavailable", "text/plain",
                                   (const uint8_t *)"no frame", 8);
                     }
+                } else if (strncmp(path, "/spot", 5) == 0) {
+                    /* debug: add a thermometry spot without touching the screen
+                     *   /spot?x=120&y=90                                  */
+                    const char *qx = strstr(path, "x=");
+                    const char *qy = strstr(path, "y=");
+                    spot_add_x = qx ? atoi(qx + 2) : VIEW_W / 2;
+                    spot_add_y = qy ? atoi(qy + 2) : VIEW_H / 2;
+                    spot_add_req = 1;
+                    http_send(fd, "200 OK", "text/plain", (const uint8_t *)"ok", 2);
                 } else if (strncmp(path, "/slide", 6) == 0) {
                     const char *qd = strstr(path, "d=");
                     slide_req = qd ? atoi(qd + 2) : 1;
@@ -3129,6 +3341,22 @@ static void build_page_thermal(lv_obj_t *scr)
 
 /* ---------------- page: settings ---------------- */
 
+static void on_overlay_click(lv_event_t *e)
+{
+    (void)e;
+    overlay_on = !overlay_on;
+    overlay_save();
+
+    if (btn_overlay) {
+        lv_obj_t *l = lv_obj_get_child(btn_overlay, 0);
+        if (l) lv_label_set_text(l, overlay_on ? "叠加 开" : "叠加 关");
+        lv_obj_set_style_bg_color(btn_overlay,
+                                  lv_color_hex(overlay_on ? 0x2A6E4F : 0x3A3F45), 0);
+    }
+    printf("overlay: %s\n", overlay_on ? "on" : "off");
+    fflush(stdout);
+}
+
 static void build_page_settings(lv_obj_t *scr)
 {
     page_settings = new_page(scr);
@@ -3173,7 +3401,11 @@ static void build_page_settings(lv_obj_t *scr)
                      lv_color_hex(0x4FC1FF), 12, 484);
 
     mk_txt(page_settings, "测温点", FONT_CN, lv_color_hex(0x007ACC), 12, 540);
-    mk_btn(page_settings, "全部清除", 12, 574, 456, 52, 0x8B2E2E, on_clear_click, NULL);
+    mk_btn(page_settings, "全部清除", 12, 574, 224, 52, 0x8B2E2E,
+           on_clear_click, NULL);
+    btn_overlay = mk_btn(page_settings, overlay_on ? "叠加 开" : "叠加 关",
+                         244, 574, 224, 52,
+                         overlay_on ? 0x2A6E4F : 0x3A3F45, on_overlay_click, NULL);
 
     mk_txt(page_settings, "4117 手持热像仪", FONT_CN,
            lv_color_hex(0x666666), 12, 700);
@@ -3504,6 +3736,10 @@ static void update_ui(void)
         files_scan();
         files_rebuild();
     }
+    if (spot_add_req) {
+        spot_add_req = 0;
+        spot_add(spot_add_x, spot_add_y);
+    }
     if (slide_req) {
         int d = slide_req;
         slide_req = 0;
@@ -3663,6 +3899,7 @@ int main(void)
     lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event1");
 
     config_load();
+    overlay_load();
     screen_init();
     font_init();
     build_ui();
