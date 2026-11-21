@@ -496,15 +496,69 @@ static void ov_text(uint8_t *buf, int w, int h, int x, int y, const char *s, int
     }
 }
 
-static void ov_dot(uint8_t *buf, int w, int h, int cx, int cy, int r)
+/* Put the reading next to the dot, flipping to the other side when it would
+ * run off the edge (marks often sit right at the border). */
+static void ov_label(uint8_t *buf, int w, int h, int x, int y, const char *txt, int sc)
+{
+    int tw = (int)strlen(txt) * 6 * sc;
+    int th = 7 * sc;
+
+    int tx = x + 8 * sc;
+    if (tx + tw > w - 2) tx = x - tw - 8 * sc;
+    if (tx < 2) tx = 2;
+
+    int ty = y - 3 * sc;
+    if (ty + th > h - 2) ty = h - 2 - th;
+    if (ty < 2) ty = 2;
+
+    ov_text(buf, w, h, tx, ty, txt, sc);
+}
+
+static void ov_dot(uint8_t *buf, int w, int h, int cx, int cy, int r, uint16_t fill)
 {
     for (int dy = -r - 1; dy <= r + 1; dy++)
         for (int dx = -r - 1; dx <= r + 1; dx++) {
             int d2 = dx * dx + dy * dy;
             if (d2 > (r + 1) * (r + 1)) continue;
-            uint16_t c = (d2 <= r * r) ? 0x07E0 : 0x0000;   /* green, black ring */
+            uint16_t c = (d2 <= r * r) ? fill : 0x0000;     /* black ring for contrast */
             ov_px(buf, w, h, cx + dx, cy + dy, c);
         }
+}
+
+/* Highest / lowest / centre, using the same colours as the on-screen marks.
+ * The coordinates in g_temps are normalised 0..1, the centre is fixed. */
+static void overlay_marks(uint8_t *buf, int w, int h)
+{
+    struct temps t;
+    struct center_temp ct;
+
+    pthread_mutex_lock(&lock);
+    t = g_temps;
+    ct = g_center;
+    pthread_mutex_unlock(&lock);
+
+    int sc = (w >= 400) ? 2 : 1;
+    int r = (w >= 400) ? 5 : 3;
+    char tb[16];
+
+    if (t.valid && sw_on[0]) {
+        int x = (int)(t.max_x * w), y = (int)(t.max_y * h);
+        ov_dot(buf, w, h, x, y, r, 0xFA28);              /* red */
+        snprintf(tb, sizeof(tb), "%.1f", t.max);
+        ov_label(buf, w, h, x, y, tb, sc);
+    }
+    if (t.valid && sw_on[1]) {
+        int x = (int)(t.min_x * w), y = (int)(t.min_y * h);
+        ov_dot(buf, w, h, x, y, r, 0x451F);              /* blue */
+        snprintf(tb, sizeof(tb), "%.1f", t.min);
+        ov_label(buf, w, h, x, y, tb, sc);
+    }
+    if (ct.valid && sw_on[2]) {
+        int x = w / 2, y = h / 2;
+        ov_dot(buf, w, h, x, y, r, 0x47F1);              /* green */
+        snprintf(tb, sizeof(tb), "%.1f", ct.value);
+        ov_label(buf, w, h, x, y, tb, sc);
+    }
 }
 
 /* Draw every valid spot (marker + temperature) scaled into a w x h buffer.
@@ -520,14 +574,21 @@ static void overlay_spots(uint8_t *buf, int w, int h)
         int x = spots[i].x * w / VIEW_W;
         int y = spots[i].y * h / VIEW_H;
 
-        ov_dot(buf, w, h, x, y, (w >= 400) ? 5 : 3);
+        ov_dot(buf, w, h, x, y, (w >= 400) ? 5 : 3, 0xFD20);   /* orange, as on screen */
 
         if (spots[i].t > -900.0f) {
             char tb[16];
             snprintf(tb, sizeof(tb), "%.1f", spots[i].t);
-            ov_text(buf, w, h, x + 8 * sc, y - 3 * sc, tb, sc);
+            ov_label(buf, w, h, x, y, tb, sc);
         }
     }
+}
+
+static void overlay_all(uint8_t *buf, int w, int h)
+{
+    if (!overlay_on) return;
+    overlay_marks(buf, w, h);
+    overlay_spots(buf, w, h);
 }
 
 
@@ -811,7 +872,7 @@ static const uint8_t *record_frame_bytes(const uint8_t *jpg, int len, int *out_l
     if (jpeg_mem_to_rgb565(jpg, (size_t)len, rec_ov_buf, &dw, &dh) != 0) return jpg;
     if (dw != IMG_W || dh != IMG_H) return jpg;      /* unexpected frame size */
 
-    overlay_spots(rec_ov_buf, IMG_W, IMG_H);
+    overlay_all(rec_ov_buf, IMG_W, IMG_H);
 
     free(rec_ov_jpg);
     rec_ov_jpg = NULL;
@@ -1295,7 +1356,7 @@ static void photo_capture(void)
     char ts[32], path[256], json[256];
     stamp_now(ts, sizeof(ts));
     snprintf(path, sizeof(path), MEDIA_DIR "/photo_%s.jpg", ts);
-    overlay_spots(snap, VIEW_W, VIEW_H);      /* burn the marks into the saved pixels */
+    overlay_all(snap, VIEW_W, VIEW_H);        /* burn the marks into the saved pixels */
     if (save_jpeg_rgb565(path, snap, VIEW_W, VIEW_H, 90) == 0) {
         snprintf(json, sizeof(json), MEDIA_DIR "/photo_%s.json", ts);
         FILE *f = fopen(json, "w");
