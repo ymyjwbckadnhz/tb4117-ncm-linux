@@ -3439,7 +3439,7 @@ static void on_overlay_click(lv_event_t *e)
 
     if (btn_overlay) {
         lv_obj_t *l = lv_obj_get_child(btn_overlay, 0);
-        if (l) lv_label_set_text(l, overlay_on ? "叠加 开" : "叠加 关");
+        if (l) lv_label_set_text(l, overlay_on ? "测温叠加 开" : "测温叠加 关");
         lv_obj_set_style_bg_color(btn_overlay,
                                   lv_color_hex(overlay_on ? 0x2A6E4F : 0x3A3F45), 0);
     }
@@ -3493,7 +3493,7 @@ static void build_page_settings(lv_obj_t *scr)
     mk_txt(page_settings, "测温点", FONT_CN, lv_color_hex(0x007ACC), 12, 540);
     mk_btn(page_settings, "全部清除", 12, 574, 224, 52, 0x8B2E2E,
            on_clear_click, NULL);
-    btn_overlay = mk_btn(page_settings, overlay_on ? "叠加 开" : "叠加 关",
+    btn_overlay = mk_btn(page_settings, overlay_on ? "测温叠加 开" : "测温叠加 关",
                          244, 574, 224, 52,
                          overlay_on ? 0x2A6E4F : 0x3A3F45, on_overlay_click, NULL);
 
