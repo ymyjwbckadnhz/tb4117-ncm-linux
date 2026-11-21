@@ -147,6 +147,7 @@ static volatile int page_req = -1;
 static volatile int modal_req = 0;
 static volatile int slide_req = 0;
 static volatile int spot_add_req = 0;
+static volatile int spot_clear_req = 0;
 static int spot_add_x, spot_add_y;
 static char *preview_req = NULL;
 static volatile int files_dirty = 0;
@@ -866,7 +867,11 @@ static size_t rec_ov_len;
 
 static const uint8_t *record_frame_bytes(const uint8_t *jpg, int len, int *out_len)
 {
-    if (!overlay_on || spot_count <= 0) return jpg;
+    /* The marks are independent of the spot list: with no custom spots the
+     * highest/lowest/centre readings still have to be burnt in. Only skip the
+     * re-encode when every mark is switched off. */
+    if (!overlay_on) return jpg;
+    if (spot_count <= 0 && !sw_on[0] && !sw_on[1] && !sw_on[2]) return jpg;
 
     int dw = 0, dh = 0;
     if (jpeg_mem_to_rgb565(jpg, (size_t)len, rec_ov_buf, &dw, &dh) != 0) return jpg;
@@ -2051,6 +2056,9 @@ static void *http_thread(void *arg)
                         http_send(fd, "503 Service Unavailable", "text/plain",
                                   (const uint8_t *)"no frame", 8);
                     }
+                } else if (strncmp(path, "/clear", 6) == 0) {
+                    spot_clear_req = 1;
+                    http_send(fd, "200 OK", "text/plain", (const uint8_t *)"ok", 2);
                 } else if (strncmp(path, "/spot", 5) == 0) {
                     /* debug: add a thermometry spot without touching the screen
                      *   /spot?x=120&y=90                                  */
@@ -3796,6 +3804,10 @@ static void update_ui(void)
         files_dirty = 0;
         files_scan();
         files_rebuild();
+    }
+    if (spot_clear_req) {
+        spot_clear_req = 0;
+        spot_clear_all();
     }
     if (spot_add_req) {
         spot_add_req = 0;
