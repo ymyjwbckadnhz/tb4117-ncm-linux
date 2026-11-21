@@ -31,7 +31,7 @@
 | **亮度 / 对比度** | `/ISAPI/Image/channels/1/Color`，滑块实时下发 |
 | **屏幕亮度** | GP7101（I2C1 @0x58，负极性 PWM） |
 | **WiFi** | `nmcli` 扫描 + 密码键盘连接 |
-| **网页管理** | 实时 MJPEG 流、状态、拍照/录像、缩略图、批量下载（ZIP）/批量删除 |
+| **网页管理** | 实时 MJPEG 流、状态、拍照/录像、缩略图、批量下载（ZIP）/批量删除；手机与电脑自适应 |
 | **机芯配置页转发** | :8081 纯 TCP 转发到机芯 Web UI，另转发 554（RTSP）与 8000（私有协议） |
 | **开机自启** | systemd 服务，异常自动重启 |
 
@@ -322,6 +322,26 @@ DDR 参数/去掉无用外设探测，收益有限，没动。
 
 RTSP 源就是 MJPEG，把 `AVPacket` 原样写进自己实现的 AVI（RIFF）容器，
 不解码不编码，录像时 CPU 几乎不增加。
+
+### 网页布局自适应
+
+页面用一段内联 CSS，按宽度切换：
+
+- **电脑**：内容限宽 760px 居中，画面最大 480px，文件行显示体积列
+- **手机**（≤520px）：画面占满宽度，按钮按两列平分，文件行隐藏体积列、缩略图缩小
+
+关键点是把文件行从 `flex` 换成了 **grid**（`auto 64px minmax(0,1fr) auto auto`），
+窄屏下少一列就少一列，不会像 flex 那样把最后一列的删除按钮挤出去：
+
+```css
+li.row{display:grid;grid-template-columns:auto 64px minmax(0,1fr) auto auto}
+@media (max-width:520px){
+  li.row{grid-template-columns:auto 44px minmax(0,1fr) auto}  /* 去掉体积列 */
+}
+```
+
+另外加了 `word-break:break-word`，长提示文字在窄屏才会换行而不是被裁；
+图片 `width:100%;max-width:480px` 保证手机上不溢出。
 
 ### 网页实时流
 
